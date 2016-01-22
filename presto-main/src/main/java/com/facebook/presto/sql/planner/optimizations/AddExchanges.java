@@ -127,7 +127,7 @@ import static com.google.common.collect.Iterables.getOnlyElement;
 import static java.util.stream.Collectors.toList;
 
 public class AddExchanges
-        extends PlanOptimizer
+        implements PlanOptimizer
 {
     private final SqlParser parser;
     private final Metadata metadata;
