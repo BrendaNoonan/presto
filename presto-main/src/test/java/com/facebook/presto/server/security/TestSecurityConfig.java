@@ -30,7 +30,6 @@ public class TestSecurityConfig
                 .setAuthenticationEnabled(false)
                 .setServiceName(null)
                 .setKeytab(null));
-
     }
 
     @Test
