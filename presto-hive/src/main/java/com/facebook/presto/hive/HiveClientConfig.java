@@ -979,6 +979,7 @@ public class HiveClientConfig
         return temporaryDirectory;
     }
 
+    @Deprecated
     @Config("hive.hdfs.temporary.directory")
     public HiveClientConfig setTemporaryDirectory(String temporaryDirectory)
     {
