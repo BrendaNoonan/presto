@@ -36,6 +36,7 @@ import static com.facebook.presto.sql.analyzer.SemanticErrorCode.COLUMN_ALREADY_
 import static com.facebook.presto.sql.analyzer.SemanticErrorCode.MISSING_TABLE;
 import static com.facebook.presto.sql.analyzer.SemanticErrorCode.TYPE_MISMATCH;
 import static com.facebook.presto.type.UnknownType.UNKNOWN;
+import static java.util.Locale.ENGLISH;
 import static java.util.concurrent.CompletableFuture.completedFuture;
 
 public class AddColumnTask
@@ -62,15 +63,16 @@ public class AddColumnTask
         Map<String, ColumnHandle> columnHandles = metadata.getColumnHandles(session, tableHandle.get());
 
         TableElement element = statement.getColumn();
+        String columnName = element.getName().toLowerCase(ENGLISH);
         Type type = metadata.getType(parseTypeSignature(element.getType()));
         if ((type == null) || type.equals(UNKNOWN)) {
-            throw new SemanticException(TYPE_MISMATCH, element, "Unknown type for column '%s' ", element.getName());
+            throw new SemanticException(TYPE_MISMATCH, element, "Unknown type for column '%s' ", columnName);
         }
-        if (columnHandles.containsKey(element.getName())) {
-            throw new SemanticException(COLUMN_ALREADY_EXISTS, statement, "Column '%s' already exists", element.getName());
+        if (columnHandles.containsKey(columnName)) {
+            throw new SemanticException(COLUMN_ALREADY_EXISTS, statement, "Column '%s' already exists", columnName);
         }
 
-        metadata.addColumn(session, tableHandle.get(), new ColumnMetadata(element.getName(), type, false));
+        metadata.addColumn(session, tableHandle.get(), new ColumnMetadata(columnName, type, false));
 
         return completedFuture(null);
     }

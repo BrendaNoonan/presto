@@ -24,6 +24,7 @@ import java.io.IOException;
 import static com.facebook.presto.tests.TestGroups.ALTER_TABLE;
 import static com.facebook.presto.tests.TestGroups.SMOKE;
 import static com.facebook.presto.tests.utils.PrestoDDLUtils.createPrestoTable;
+import static com.teradata.tempto.assertions.QueryAssert.Row.row;
 import static com.teradata.tempto.assertions.QueryAssert.assertThat;
 import static com.teradata.tempto.query.QueryExecutor.query;
 import static com.teradata.tempto.query.QueryType.UPDATE;
@@ -37,16 +38,64 @@ public class AlterTableTests
     public void renameTable()
             throws IOException
     {
-        String tableName = "to_be_renamed_table_name";
+        String tableName = "to_be_renamed";
         String renamedTableName = "renamed_table_name";
-        try (Table table = createPrestoTable(tableName, "CREATE TABLE %s AS SELECT * FROM nation")) {
-            assertThat(query(format("ALTER TABLE %s RENAME TO %s", table.getNameInDatabase(), renamedTableName), UPDATE))
+
+        try {
+            createPrestoTable(tableName, "CREATE TABLE %s AS SELECT * FROM nation");
+            assertThat(query(format("ALTER TABLE %s RENAME TO %s", tableName, renamedTableName), UPDATE))
                     .hasRowsCount(1);
             assertThat(query(format("SELECT * FROM %s", renamedTableName)))
                     .hasRowsCount(25);
             // rename back to original name
-            assertThat(query(format("ALTER TABLE %s RENAME TO %s", renamedTableName, table.getNameInDatabase()), UPDATE))
+            assertThat(query(format("ALTER TABLE %s RENAME TO %s", renamedTableName, tableName), UPDATE))
                     .hasRowsCount(1);
+        }
+        finally {
+            query(format("drop table %s", tableName));
+        }
+    }
+
+    @Test(groups = {ALTER_TABLE, SMOKE})
+    public void renameColumn()
+            throws IOException
+    {
+        try {
+            Table table = createPrestoTable("tableName", "CREATE TABLE %s AS SELECT * FROM nation");
+            assertThat(query(format("ALTER TABLE %s RENAME COLUMN n_nationkey TO nationkey", table.getNameInDatabase()), UPDATE))
+                    .hasRowsCount(1);
+            assertThat(query(format("SELECT count(nationkey) FROM %s", table.getNameInDatabase())))
+                    .containsExactly(row(25));
+            assertThat(() -> query(format("ALTER TABLE %s RENAME COLUMN nationkey TO nATIoNkEy", table.getNameInDatabase())))
+                    .failsWithMessage("Column 'nationkey' already exists");
+            assertThat(() -> query(format("ALTER TABLE %s RENAME COLUMN nationkey TO n_regionkeY", table.getNameInDatabase())))
+                    .failsWithMessage("Column 'n_regionkey' already exists");
+
+            assertThat(query(format("ALTER TABLE %s RENAME COLUMN nationkey TO n_nationkey", table.getNameInDatabase())));
+        }
+        finally {
+            query("drop table tableName");
+        }
+    }
+
+    @Test(groups = {ALTER_TABLE, SMOKE})
+    public void addColumn()
+            throws IOException
+    {
+        try {
+            Table table = createPrestoTable("tableName", "CREATE TABLE %s AS SELECT * FROM nation");
+
+            assertThat(query(format("SELECT count(1) FROM %s", table.getNameInDatabase())))
+                    .containsExactly(row(25));
+            assertThat(query(format("ALTER TABLE %s ADD COLUMN some_new_column BIGINT", table.getNameInDatabase())))
+                    .hasRowsCount(1);
+            assertThat(() -> query(format("ALTER TABLE %s ADD COLUMN n_nationkey BIGINT", table.getNameInDatabase())))
+                    .failsWithMessage("Column 'n_nationkey' already exists");
+            assertThat(() -> query(format("ALTER TABLE %s ADD COLUMN n_naTioNkEy BIGINT", table.getNameInDatabase())))
+                    .failsWithMessage("Column 'n_nationkey' already exists");
+        }
+        finally {
+            query("drop table tableName");
         }
     }
 }
