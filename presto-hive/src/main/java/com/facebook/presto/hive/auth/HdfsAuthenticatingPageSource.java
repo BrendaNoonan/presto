@@ -44,19 +44,25 @@ public class HdfsAuthenticatingPageSource
     @Override
     public long getCompletedBytes()
     {
-        return authentication.doAs(connectorSession.getUser(), targetPageSource::getCompletedBytes);
+        // not wrapping due to performance reasons
+        // todo: think of better solution
+        return targetPageSource.getCompletedBytes();
     }
 
     @Override
     public long getReadTimeNanos()
     {
-        return authentication.doAs(connectorSession.getUser(), targetPageSource::getReadTimeNanos);
+        // not wrapping due to performance reasons
+        // todo: think of better solution
+        return targetPageSource.getReadTimeNanos();
     }
 
     @Override
     public boolean isFinished()
     {
-        return authentication.doAs(connectorSession.getUser(), targetPageSource::isFinished);
+        // not wrapping due to performance reasons
+        // todo: think of better solution
+        return targetPageSource.isFinished();
     }
 
     @Override
@@ -68,7 +74,9 @@ public class HdfsAuthenticatingPageSource
     @Override
     public long getSystemMemoryUsage()
     {
-        return authentication.doAs(connectorSession.getUser(), targetPageSource::getSystemMemoryUsage);
+        // not wrapping due to performance reasons
+        // todo: think of better solution
+        return targetPageSource.getSystemMemoryUsage();
     }
 
     @Override
