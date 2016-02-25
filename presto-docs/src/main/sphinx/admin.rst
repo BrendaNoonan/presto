@@ -8,4 +8,3 @@ Administration
     admin/web-interface
     admin/tuning
     admin/queue
-    admin/kerberos
