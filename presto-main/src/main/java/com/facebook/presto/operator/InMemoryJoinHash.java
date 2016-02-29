@@ -16,12 +16,12 @@ package com.facebook.presto.operator;
 import com.facebook.presto.spi.Page;
 import com.facebook.presto.spi.PageBuilder;
 import com.facebook.presto.spi.block.Block;
+import com.facebook.presto.util.array.ByteBigArray;
+import com.facebook.presto.util.array.IntBigArray;
 import com.google.common.primitives.Ints;
 import io.airlift.slice.XxHash64;
 import it.unimi.dsi.fastutil.HashCommon;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
-
-import java.util.Arrays;
 
 import static com.facebook.presto.operator.SyntheticAddress.decodePosition;
 import static com.facebook.presto.operator.SyntheticAddress.decodeSliceIndex;
@@ -39,10 +39,10 @@ public final class InMemoryJoinHash
 
     private final int channelCount;
     private final int mask;
-    private final int[] key;
-    private final int[] positionLinks;
+    private final IntBigArray key;
+    private final IntBigArray positionLinks;
     private final long size;
-    private final byte[] positionToHashes;
+    private final ByteBigArray positionToHashes;
 
     public InMemoryJoinHash(LongArrayList addresses, PagesHashStrategy pagesHashStrategy)
     {
@@ -56,39 +56,41 @@ public final class InMemoryJoinHash
                 +  sizeOf(addresses.elements()) + pagesHashStrategy.getSizeInBytes();
 
         mask = hashSize - 1;
-        key = new int[hashSize];
-        Arrays.fill(key, -1);
+        key = new IntBigArray(-1);
+        key.ensureCapacity(hashSize);
 
-        this.positionLinks = new int[addresses.size()];
-        Arrays.fill(positionLinks, -1);
+        positionLinks = new IntBigArray(-1);
+        positionLinks.ensureCapacity(addresses.size());
 
         // Native array of hashes for faster collisions resolution compared
         // to accessing values in blocks. We use bytes to reduce memory foot print
         // and there is no performance gain from storing full hashes
-        positionToHashes = new byte[addresses.size()];
+        positionToHashes = new ByteBigArray();
+        positionToHashes.ensureCapacity(addresses.size());
 
         // index pages
         for (int position = 0; position < addresses.size(); position++) {
             int hash = readHashPosition(position);
-            positionToHashes[position] = (byte) hash;
+            positionToHashes.set(position, (byte) hash);
             int pos = getHashPosition(hash, mask);
 
             // look for an empty slot or a slot containing this key
-            while (key[pos] != -1) {
-                int currentKey = key[pos];
+            int currentKey = key.get(pos);
+            while (currentKey != -1) {
                 if (positionEqualsPosition(currentKey, position)) {
                     // found a slot for this key
                     // link the new key position to the current key position
-                    positionLinks[position] = currentKey;
+                    positionLinks.set(position, currentKey);
 
                     // key[pos] updated outside of this loop
                     break;
                 }
                 // increment position and mask to handler wrap around
                 pos = (pos + 1) & mask;
+                currentKey = key.get(pos);
             }
 
-            key[pos] = position;
+            key.set(pos, position);
         }
     }
 
@@ -101,7 +103,7 @@ public final class InMemoryJoinHash
     @Override
     public int getJoinPositionCount()
     {
-        return positionLinks.length;
+        return addresses.size();
     }
 
     @Override
@@ -120,13 +122,14 @@ public final class InMemoryJoinHash
     public long getJoinPosition(int position, Page page, int rawHash)
     {
         int pos = getHashPosition(rawHash, mask);
-
-        while (key[pos] != -1) {
-            if (positionEqualsCurrentRow(key[pos], (byte) rawHash, position, page.getBlocks())) {
-                return key[pos];
+        int value = key.get(pos);
+        while (value != -1) {
+            if (positionEqualsCurrentRow(value, (byte) rawHash, position, page.getBlocks())) {
+                return value;
             }
             // increment position and mask to handler wrap around
             pos = (pos + 1) & mask;
+            value = key.get(pos);
         }
         return -1;
     }
@@ -134,7 +137,7 @@ public final class InMemoryJoinHash
     @Override
     public final long getNextJoinPosition(long currentPosition)
     {
-        return positionLinks[Ints.checkedCast(currentPosition)];
+        return positionLinks.get(Ints.checkedCast(currentPosition));
     }
 
     @Override
@@ -163,7 +166,7 @@ public final class InMemoryJoinHash
 
     private boolean positionEqualsCurrentRow(int leftPosition, byte rawHash, int rightPosition, Block... rightBlocks)
     {
-        if (positionToHashes[leftPosition] != rawHash) {
+        if (positionToHashes.get(leftPosition) != rawHash) {
             return false;
         }
 
@@ -176,7 +179,7 @@ public final class InMemoryJoinHash
 
     private boolean positionEqualsPosition(int leftPosition, int rightPosition)
     {
-        if (positionToHashes[leftPosition] != positionToHashes[rightPosition]) {
+        if (positionToHashes.get(leftPosition) != positionToHashes.get(rightPosition)) {
             return false;
         }
 
