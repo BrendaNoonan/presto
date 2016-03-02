@@ -40,14 +40,21 @@ public class SignatureBinder
 {
     private final TypeManager typeManager;
     private final Signature declaredSignature;
-    private final boolean allowCoercion;
+    private final CoercionPermission coercionPermission;
     private final Map<String, TypeVariableConstraint> typeVariableConstraints;
 
-    public SignatureBinder(TypeManager typeManager, Signature declaredSignature, boolean allowCoercion)
+    public enum CoercionPermission
+    {
+        ALLOW_ALL,
+        ALLOW_NONE,
+        UNKNOWN_ONLY
+    }
+
+    public SignatureBinder(TypeManager typeManager, Signature declaredSignature, CoercionPermission coercionPermission)
     {
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
         this.declaredSignature = requireNonNull(declaredSignature, "parametrizedSignature is null");
-        this.allowCoercion = allowCoercion;
+        this.coercionPermission = coercionPermission;
         this.typeVariableConstraints = declaredSignature.getTypeVariableConstraints()
                 .stream()
                 .collect(toMap(TypeVariableConstraint::getName, t -> t));
@@ -180,9 +187,9 @@ public class SignatureBinder
                 && matchAndBindTypeParameters(expectedArgumentSignature, actualArgumentType, boundVariables)) {
             return true;
         }
-        else if (allowCoercion) {
-            // UNKNOWN matches to all the types, but based on UNKNOWN we can't determine the actual type parameters
+        else if (allowCoercion(actualArgumentType)) {
             if (actualArgumentType.equals(UnknownType.UNKNOWN) && isTypeParametrized(expectedArgumentSignature)) {
+                // UNKNOWN matches to all the types, but based on UNKNOWN we can't determine the actual type parameters
                 return true;
             }
             Optional<Type> coercedParameterType = calculateParameterTypeWithCoercion(actualArgumentSignature, expectedArgumentSignature);
@@ -190,8 +197,12 @@ public class SignatureBinder
                 return matchAndBindTypeParameters(expectedArgumentSignature, coercedParameterType.get(), boundVariables);
             }
         }
-
         return false;
+    }
+
+    private boolean allowCoercion(Type type)
+    {
+        return coercionPermission == CoercionPermission.ALLOW_ALL || coercionPermission == CoercionPermission.UNKNOWN_ONLY && type.equals(UnknownType.UNKNOWN);
     }
 
     private boolean matchAndBindTypeVariable(
@@ -205,7 +216,7 @@ public class SignatureBinder
                 boundVariables.setTypeVariable(typeVariableName, actualArgumentType);
                 return true;
             }
-            if (allowCoercion && typeVariableConstraint.getVariadicBound() != null) {
+            if (allowCoercion(actualArgumentType) && typeVariableConstraint.getVariadicBound() != null) {
                 // UNKNOWN matches to all the types, but based on UNKNOWN we can't determine the actual type parameters
                 if (actualArgumentType.equals(UnknownType.UNKNOWN)) {
                     return true;
@@ -226,7 +237,7 @@ public class SignatureBinder
             if (currentBoundType.equals(actualArgumentType)) {
                 return true;
             }
-            if (allowCoercion) {
+            if (allowCoercion(actualArgumentType)) {
                 Optional<Type> commonSuperType = typeManager.getCommonSuperType(currentBoundType, actualArgumentType);
                 if (commonSuperType.isPresent() && typeVariableConstraint.canBind(commonSuperType.get())) {
                     boundVariables.setTypeVariable(typeVariableName, commonSuperType.get());

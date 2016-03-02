@@ -5665,7 +5665,7 @@ public abstract class AbstractTestQueries
         MaterializedResult actual = computeActual(session, "DESCRIBE INPUT my_query");
         MaterializedResult expected = resultBuilder(session, BIGINT, VARCHAR)
                 .row(0, "unknown")
-                .row(1, "unknown")
+                .row(1, "bigint")
                 .build();
         assertEqualsIgnoreOrder(actual, expected);
     }
