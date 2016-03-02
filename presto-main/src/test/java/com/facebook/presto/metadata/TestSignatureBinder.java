@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.metadata;
 
+import com.facebook.presto.metadata.SignatureBinder.CoercionPermission;
 import com.facebook.presto.spi.type.BigintType;
 import com.facebook.presto.spi.type.DecimalType;
 import com.facebook.presto.spi.type.DoubleType;
@@ -33,6 +34,8 @@ import static com.facebook.presto.metadata.Signature.comparableTypeParameter;
 import static com.facebook.presto.metadata.Signature.longVariableCalculation;
 import static com.facebook.presto.metadata.Signature.typeVariable;
 import static com.facebook.presto.metadata.Signature.withVariadicBound;
+import static com.facebook.presto.metadata.SignatureBinder.CoercionPermission.ALLOW_ALL;
+import static com.facebook.presto.metadata.SignatureBinder.CoercionPermission.ALLOW_NONE;
 import static com.facebook.presto.metadata.SignatureBinder.bindVariables;
 import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
 import static java.util.stream.Collectors.toList;
@@ -803,7 +806,7 @@ public class TestSignatureBinder
     {
         private final Signature function;
 
-        private boolean allowCoercion = false;
+        private CoercionPermission coercionPermission = ALLOW_NONE;
         private Optional<BoundVariables> boundVariables = Optional.empty();
 
         private BindSignatureAssertion(Signature function)
@@ -813,20 +816,20 @@ public class TestSignatureBinder
 
         public BindSignatureAssertion withCoercion()
         {
-            allowCoercion = true;
+            coercionPermission = ALLOW_ALL;
             return this;
         }
 
         public BindSignatureAssertion toArguments(String... arguments)
         {
-            SignatureBinder signatureBinder = new SignatureBinder(typeRegistry, function, allowCoercion);
+            SignatureBinder signatureBinder = new SignatureBinder(typeRegistry, function, coercionPermission);
             boundVariables = signatureBinder.matchAndBindSignatureVariables(types(arguments));
             return this;
         }
 
         public BindSignatureAssertion toArgumentsAndReturnType(List<String> arguments, String returnTypeSignature)
         {
-            SignatureBinder signatureBinder = new SignatureBinder(typeRegistry, function, allowCoercion);
+            SignatureBinder signatureBinder = new SignatureBinder(typeRegistry, function, coercionPermission);
             List<Type> argumentTypes = types(arguments.toArray(new String[arguments.size()]));
             Type returnType = type(returnTypeSignature);
             boundVariables = signatureBinder.matchAndBindSignatureVariables(argumentTypes, returnType);
