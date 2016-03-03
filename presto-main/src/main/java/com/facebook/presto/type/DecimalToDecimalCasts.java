@@ -43,9 +43,9 @@ public final class DecimalToDecimalCasts
     public static final Signature SIGNATURE = Signature.builder()
             .kind(SCALAR)
             .operatorType(CAST)
-            .typeVariableConstraints(comparableWithVariadicBound("X", DECIMAL), comparableWithVariadicBound("Y", DECIMAL))
-            .argumentTypes("X")
-            .returnType("Y")
+            .literalParameters("fp", "fs", "tp", "ts")
+            .argumentTypes("decimal(fp, fs)")
+            .returnType("decimal(tp, ts)")
             .build();
 
     // TODO: filtering mechanism could be used to return NoOp method when only precision is increased
@@ -61,12 +61,14 @@ public final class DecimalToDecimalCasts
 
     private static List<Object> shortToShortExtraParameters(SpecializeContext context)
     {
-        DecimalType argumentType = (DecimalType) context.getType("X");
-        DecimalType resultType = (DecimalType) context.getType("Y");
-        long rescale = ShortDecimalType.tenToNth(Math.abs(resultType.getScale() - argumentType.getScale()));
+        long fromPrecision = context.getLiteral("fp");
+        long fromScale = context.getLiteral("fs");
+        long toPrecision = context.getLiteral("tp");
+        long toScale = context.getLiteral("ts");
+        long rescale = ShortDecimalType.tenToNth((int) Math.abs(toScale - fromScale));
         return ImmutableList.of(
-                argumentType.getPrecision(), argumentType.getScale(),
-                resultType.getPrecision(), resultType.getScale(),
+                fromPrecision, fromScale,
+                toPrecision, toScale,
                 rescale, rescale / 2);
     }
 
@@ -99,11 +101,13 @@ public final class DecimalToDecimalCasts
 
     private static List<Object> precisionAndScaleExtraParameters(SpecializeContext context)
     {
-        DecimalType argumentType = (DecimalType) context.getType("X");
-        DecimalType resultType = (DecimalType) context.getType("Y");
+        long fromPrecision = context.getLiteral("fp");
+        long fromScale = context.getLiteral("fs");
+        long toPrecision = context.getLiteral("tp");
+        long toScale = context.getLiteral("ts");
         return ImmutableList.of(
-                argumentType.getPrecision(), argumentType.getScale(),
-                resultType.getPrecision(), resultType.getScale());
+                fromPrecision, fromScale,
+                toPrecision, toScale);
     }
 
     public static Slice shortToLongCast(long value,
