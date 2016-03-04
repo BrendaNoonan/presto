@@ -15,6 +15,7 @@ package com.facebook.presto.execution;
 
 import io.airlift.configuration.Config;
 import io.airlift.configuration.DefunctConfig;
+import io.airlift.configuration.LegacyConfig;
 import io.airlift.units.Duration;
 import io.airlift.units.MinDuration;
 
@@ -122,6 +123,7 @@ public class QueryManagerConfig
         return minQueryExpireAge;
     }
 
+    @LegacyConfig("query.max-age")
     @Config("query.min-expire-age")
     public QueryManagerConfig setMinQueryExpireAge(Duration minQueryExpireAge)
     {
