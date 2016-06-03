@@ -55,9 +55,6 @@ public class MaterializedRow
         if (value instanceof Double || value instanceof Float) {
             return new ApproximateDouble(((Number) value).doubleValue(), precision);
         }
-        if (value instanceof Number) {
-            return ((Number) value).longValue();
-        }
         if (value instanceof List) {
             return ((List<?>) value).stream()
                     .map(element -> processValue(precision, element))

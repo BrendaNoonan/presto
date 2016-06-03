@@ -22,18 +22,22 @@ import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.ConnectorTableMetadata;
 import com.facebook.presto.spi.PrestoException;
+import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.analyzer.Analysis;
 import com.facebook.presto.sql.analyzer.Field;
 import com.facebook.presto.sql.analyzer.RelationType;
-import com.facebook.presto.sql.planner.PartitionFunctionBinding.PartitionFunctionArgumentBinding;
 import com.facebook.presto.sql.planner.optimizations.PlanOptimizer;
 import com.facebook.presto.sql.planner.plan.DeleteNode;
+import com.facebook.presto.sql.planner.plan.ExplainAnalyzeNode;
 import com.facebook.presto.sql.planner.plan.LimitNode;
 import com.facebook.presto.sql.planner.plan.OutputNode;
 import com.facebook.presto.sql.planner.plan.PlanNode;
 import com.facebook.presto.sql.planner.plan.ProjectNode;
 import com.facebook.presto.sql.planner.plan.TableFinishNode;
 import com.facebook.presto.sql.planner.plan.TableWriterNode;
+import com.facebook.presto.sql.planner.plan.ValuesNode;
+import com.facebook.presto.sql.planner.sanity.PlanSanityChecker;
+import com.facebook.presto.sql.tree.Cast;
 import com.facebook.presto.sql.tree.CreateTableAsSelect;
 import com.facebook.presto.sql.tree.Delete;
 import com.facebook.presto.sql.tree.Explain;
@@ -89,33 +93,7 @@ public class LogicalPlanner
 
     public Plan plan(Analysis analysis)
     {
-        RelationPlan plan;
-        Statement statement = analysis.getStatement();
-        if (statement instanceof CreateTableAsSelect) {
-            checkState(analysis.getCreateTableDestination().isPresent(), "Table destination is missing");
-            plan = createTableCreationPlan(analysis, ((CreateTableAsSelect) statement).getQuery());
-        }
-        else if (statement instanceof Insert) {
-            checkState(analysis.getInsert().isPresent(), "Insert handle is missing");
-            plan = createInsertPlan(analysis, (Insert) statement);
-        }
-        else if (statement instanceof Delete) {
-            plan = createDeletePlan(analysis, (Delete) statement);
-        }
-        else if (statement instanceof Query) {
-            plan = createRelationPlan(analysis, (Query) statement);
-        }
-        else if (statement instanceof Explain && ((Explain) statement).isAnalyze()) {
-            throw new PrestoException(NOT_SUPPORTED, "EXPLAIN ANALYZE not yet implemented");
-        }
-        else {
-            throw new PrestoException(NOT_SUPPORTED, "Unsupported statement type " + statement.getClass().getSimpleName());
-        }
-
-        PlanNode root = createOutputPlan(plan, analysis);
-
-        // make sure we produce a valid plan. This is mainly to catch programming errors
-        PlanSanityChecker.validate(root);
+        PlanNode root = planStatement(analysis, analysis.getStatement());
 
         for (PlanOptimizer optimizer : planOptimizers) {
             root = optimizer.optimize(root, session, symbolAllocator.getTypes(), symbolAllocator, idAllocator);
@@ -126,6 +104,46 @@ public class LogicalPlanner
         PlanSanityChecker.validate(root);
 
         return new Plan(root, symbolAllocator);
+    }
+
+    private PlanNode planStatement(Analysis analysis, Statement statement)
+    {
+        if (statement instanceof CreateTableAsSelect) {
+            checkState(analysis.getCreateTableDestination().isPresent(), "Table destination is missing");
+            if (analysis.isCreateTableAsSelectNoOp()) {
+                List<Expression> emptyRow = ImmutableList.of();
+                PlanNode source = new ValuesNode(idAllocator.getNextId(), ImmutableList.of(), ImmutableList.of(emptyRow));
+                return new OutputNode(idAllocator.getNextId(), source, ImmutableList.of(), ImmutableList.of());
+            }
+            else {
+                return createOutputPlan(createTableCreationPlan(analysis, ((CreateTableAsSelect) statement).getQuery()), analysis);
+            }
+        }
+        else if (statement instanceof Insert) {
+            checkState(analysis.getInsert().isPresent(), "Insert handle is missing");
+            return createOutputPlan(createInsertPlan(analysis, (Insert) statement), analysis);
+        }
+        else if (statement instanceof Delete) {
+            return createOutputPlan(createDeletePlan(analysis, (Delete) statement), analysis);
+        }
+        else if (statement instanceof Query) {
+            return createOutputPlan(createRelationPlan(analysis, (Query) statement), analysis);
+        }
+        else if (statement instanceof Explain && ((Explain) statement).isAnalyze()) {
+            return createOutputPlan(createExplainAnalyzePlan(analysis, (Explain) statement), analysis);
+        }
+        else {
+            throw new PrestoException(NOT_SUPPORTED, "Unsupported statement type " + statement.getClass().getSimpleName());
+        }
+    }
+
+    private RelationPlan createExplainAnalyzePlan(Analysis analysis, Explain statement)
+    {
+        RelationType descriptor = analysis.getOutputDescriptor(statement);
+        PlanNode root = planStatement(analysis, statement.getStatement());
+        Symbol outputSymbol = symbolAllocator.newSymbol(descriptor.getFieldByIndex(0));
+        root = new ExplainAnalyzeNode(idAllocator.getNextId(), root, outputSymbol);
+        return new RelationPlan(root, descriptor, ImmutableList.of(outputSymbol), Optional.empty());
     }
 
     private RelationPlan createTableCreationPlan(Analysis analysis, Query query)
@@ -169,7 +187,17 @@ public class LogicalPlanner
                 assignments.put(output, new NullLiteral());
             }
             else {
-                assignments.put(output, plan.getSymbol(index).toQualifiedNameReference());
+                Symbol input = plan.getSymbol(index);
+                Type tableType = column.getType();
+                Type queryType = symbolAllocator.getTypes().get(input);
+
+                if (queryType.equals(tableType) || metadata.getTypeManager().isTypeOnlyCoercion(queryType, tableType)) {
+                    assignments.put(output, input.toQualifiedNameReference());
+                }
+                else {
+                    Expression cast = new Cast(input.toQualifiedNameReference(), tableType.getTypeSignature().toString());
+                    assignments.put(output, cast);
+                }
             }
         }
         ProjectNode projectNode = new ProjectNode(idAllocator.getNextId(), plan.getRoot(), assignments.build());
@@ -208,7 +236,7 @@ public class LogicalPlanner
         PlanNode source = plan.getRoot();
 
         if (!analysis.isCreateTableAsSelectWithData()) {
-            source = new LimitNode(idAllocator.getNextId(), source, 0L);
+            source = new LimitNode(idAllocator.getNextId(), source, 0L, false);
         }
 
         // todo this should be checked in analysis
@@ -220,26 +248,23 @@ public class LogicalPlanner
 
         List<Symbol> symbols = plan.getOutputSymbols();
 
-        Optional<PartitionFunctionBinding> partitionFunctionBinding = Optional.empty();
+        Optional<PartitioningScheme> partitioningScheme = Optional.empty();
         if (writeTableLayout.isPresent()) {
-            List<PartitionFunctionArgumentBinding> partitionFunctionArguments = new ArrayList<>();
+            List<Symbol> partitionFunctionArguments = new ArrayList<>();
             writeTableLayout.get().getPartitionColumns().stream()
                     .mapToInt(columnNames::indexOf)
                     .mapToObj(symbols::get)
-                    .map(PartitionFunctionArgumentBinding::new)
                     .forEach(partitionFunctionArguments::add);
             plan.getSampleWeight()
-                    .map(PartitionFunctionArgumentBinding::new)
                     .ifPresent(partitionFunctionArguments::add);
 
             List<Symbol> outputLayout = new ArrayList<>(symbols);
             plan.getSampleWeight()
                     .ifPresent(outputLayout::add);
 
-            partitionFunctionBinding = Optional.of(new PartitionFunctionBinding(
-                    writeTableLayout.get().getPartitioning(),
-                    outputLayout,
-                    partitionFunctionArguments));
+            partitioningScheme = Optional.of(new PartitioningScheme(
+                    Partitioning.create(writeTableLayout.get().getPartitioning(), partitionFunctionArguments),
+                    outputLayout));
         }
 
         PlanNode writerNode = new TableWriterNode(
@@ -250,7 +275,7 @@ public class LogicalPlanner
                 columnNames,
                 writerOutputs,
                 plan.getSampleWeight(),
-                partitionFunctionBinding);
+                partitioningScheme);
 
         List<Symbol> outputs = ImmutableList.of(symbolAllocator.newSymbol("rows", BIGINT));
         TableFinishNode commitNode = new TableFinishNode(
@@ -265,7 +290,7 @@ public class LogicalPlanner
     private RelationPlan createDeletePlan(Analysis analysis, Delete node)
     {
         QueryPlanner planner = new QueryPlanner(analysis, symbolAllocator, idAllocator, metadata, session, Optional.empty());
-        DeleteNode deleteNode = planner.planDelete(node);
+        DeleteNode deleteNode = planner.plan(node);
 
         List<Symbol> outputs = ImmutableList.of(symbolAllocator.newSymbol("rows", BIGINT));
         TableFinishNode commitNode = new TableFinishNode(idAllocator.getNextId(), deleteNode, deleteNode.getTarget(), outputs);

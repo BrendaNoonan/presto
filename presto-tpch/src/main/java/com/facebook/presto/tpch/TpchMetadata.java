@@ -30,6 +30,10 @@ import com.facebook.presto.spi.SortingProperty;
 import com.facebook.presto.spi.block.SortOrder;
 import com.facebook.presto.spi.connector.ConnectorMetadata;
 import com.facebook.presto.spi.predicate.TupleDomain;
+import com.facebook.presto.spi.type.BigintType;
+import com.facebook.presto.spi.type.DateType;
+import com.facebook.presto.spi.type.DoubleType;
+import com.facebook.presto.spi.type.IntegerType;
 import com.facebook.presto.spi.type.Type;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -48,9 +52,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
-import static com.facebook.presto.spi.type.DateType.DATE;
-import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
-import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
+import static com.facebook.presto.spi.type.VarcharType.createUnboundedVarcharType;
 import static com.facebook.presto.tpch.Types.checkType;
 import static java.util.Objects.requireNonNull;
 
@@ -276,14 +278,16 @@ public class TpchMetadata
     public static Type getPrestoType(TpchColumnType tpchType)
     {
         switch (tpchType) {
-            case BIGINT:
-                return BIGINT;
+            case IDENTIFIER:
+                return BigintType.BIGINT;
+            case INTEGER:
+                return IntegerType.INTEGER;
             case DATE:
-                return DATE;
+                return DateType.DATE;
             case DOUBLE:
-                return DOUBLE;
+                return DoubleType.DOUBLE;
             case VARCHAR:
-                return VARCHAR;
+                return createUnboundedVarcharType();
         }
         throw new IllegalArgumentException("Unsupported type " + tpchType);
     }

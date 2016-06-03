@@ -21,6 +21,7 @@ import com.google.common.collect.ImmutableMap;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
 
@@ -40,8 +41,10 @@ public class HiveOutputTableHandle
             @JsonProperty("inputColumns") List<HiveColumnHandle> inputColumns,
             @JsonProperty("filePrefix") String filePrefix,
             @JsonProperty("locationHandle") LocationHandle locationHandle,
-            @JsonProperty("hiveStorageFormat") HiveStorageFormat hiveStorageFormat,
+            @JsonProperty("tableStorageFormat") HiveStorageFormat tableStorageFormat,
+            @JsonProperty("partitionStorageFormat") HiveStorageFormat partitionStorageFormat,
             @JsonProperty("partitionedBy") List<String> partitionedBy,
+            @JsonProperty("bucketProperty") Optional<HiveBucketProperty> bucketProperty,
             @JsonProperty("tableOwner") String tableOwner,
             @JsonProperty("additionalTableParameters") Map<String, String> additionalTableParameters)
     {
@@ -51,8 +54,10 @@ public class HiveOutputTableHandle
                 tableName,
                 inputColumns,
                 filePrefix,
-                requireNonNull(locationHandle, "locationHandle is null"),
-                hiveStorageFormat);
+                locationHandle,
+                bucketProperty,
+                tableStorageFormat,
+                partitionStorageFormat);
 
         this.partitionedBy = ImmutableList.copyOf(requireNonNull(partitionedBy, "partitionedBy is null"));
         this.tableOwner = requireNonNull(tableOwner, "tableOwner is null");

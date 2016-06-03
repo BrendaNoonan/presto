@@ -35,6 +35,7 @@ import com.facebook.presto.sql.parser.SqlParser;
 import com.facebook.presto.sql.tree.Statement;
 import com.facebook.presto.transaction.LegacyTransactionConnector;
 import com.facebook.presto.transaction.TransactionManager;
+import com.facebook.presto.type.ArrayType;
 import com.facebook.presto.type.TypeRegistry;
 import com.google.common.collect.ImmutableList;
 import io.airlift.json.JsonCodec;
@@ -47,6 +48,7 @@ import java.util.function.Consumer;
 
 import static com.facebook.presto.metadata.ViewDefinition.ViewColumn;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.facebook.presto.sql.analyzer.SemanticErrorCode.AMBIGUOUS_ATTRIBUTE;
 import static com.facebook.presto.sql.analyzer.SemanticErrorCode.CANNOT_HAVE_AGGREGATIONS_OR_WINDOWS;
@@ -103,14 +105,6 @@ public class TestAnalyzer
     private Metadata metadata;
 
     @Test
-    public void testDuplicateRelation()
-            throws Exception
-    {
-        assertFails(DUPLICATE_RELATION, "SELECT * FROM t1 JOIN t1 USING (a)");
-        assertFails(DUPLICATE_RELATION, "SELECT * FROM t1 x JOIN t2 x USING (a)");
-    }
-
-    @Test
     public void testNonComparableGroupBy()
             throws Exception
     {
@@ -158,7 +152,7 @@ public class TestAnalyzer
     public void testScalarSubQuery()
             throws Exception
     {
-        assertFails(NOT_SUPPORTED, "SELECT 'a', (VALUES 1) GROUP BY 1");
+        analyze("SELECT 'a', (VALUES 1) GROUP BY 1");
         analyze("SELECT 'a', (SELECT (1))");
         analyze("SELECT * FROM t1 WHERE (VALUES 1) = 2");
         analyze("SELECT * FROM t1 WHERE (VALUES 1) IN (VALUES 1)");
@@ -383,11 +377,12 @@ public class TestAnalyzer
     }
 
     @Test
-    public void testNonEquiJoin()
+    public void testNonEquiOuterJoin()
             throws Exception
     {
-        assertFails(NOT_SUPPORTED, "SELECT * FROM t1 JOIN t2 ON t1.a + t2.a = 1");
-        assertFails(NOT_SUPPORTED, "SELECT * FROM t1 JOIN t2 ON t1.a = t2.a OR t1.b = t2.b");
+        analyze("SELECT * FROM t1 LEFT JOIN t2 ON t1.a + t2.a = 1");
+        analyze("SELECT * FROM t1 RIGHT JOIN t2 ON t1.a + t2.a = 1");
+        analyze("SELECT * FROM t1 LEFT JOIN t2 ON t1.a = t2.a OR t1.b = t2.b");
     }
 
     @Test
@@ -568,6 +563,7 @@ public class TestAnalyzer
         analyze("INSERT INTO t3 SELECT * FROM t3");
         analyze("INSERT INTO t3 SELECT a, b FROM t3");
         assertFails(MISMATCHED_SET_COLUMN_TYPES, "INSERT INTO t1 VALUES (1, 2)");
+        analyze("INSERT INTO t5 (a) VALUES(null)");
 
         // ignore t5 hidden column
         analyze("INSERT INTO t5 VALUES (1)");
@@ -585,6 +581,16 @@ public class TestAnalyzer
         assertFails(MISSING_COLUMN, "INSERT INTO t6 (unknown) SELECT * FROM t6");
         assertFails(DUPLICATE_COLUMN_NAME, "INSERT INTO t6 (a, a) SELECT * FROM t6");
         assertFails(DUPLICATE_COLUMN_NAME, "INSERT INTO t6 (a, A) SELECT * FROM t6");
+
+        // b is bigint, while a is double, coercion from b to a is possible
+        analyze("INSERT INTO t7 (b) SELECT (a) FROM t7 ");
+        assertFails(MISMATCHED_SET_COLUMN_TYPES, "INSERT INTO t7 (a) SELECT (b) FROM t7");
+
+        // d is array of bigints, while c is array of doubles, coercion from d to c is possible
+        analyze("INSERT INTO t7 (d) SELECT (c) FROM t7 ");
+        assertFails(MISMATCHED_SET_COLUMN_TYPES, "INSERT INTO t7 (c) SELECT (d) FROM t7 ");
+
+        analyze("INSERT INTO t7 (d) VALUES (ARRAY[null])");
     }
 
     @Test
@@ -658,6 +664,9 @@ public class TestAnalyzer
         assertFails(TYPE_MISMATCH, "SELECT CAST(date '2014-01-01' AS bigint)");
         assertFails(TYPE_MISMATCH, "SELECT TRY_CAST(date '2014-01-01' AS bigint)");
         assertFails(TYPE_MISMATCH, "SELECT CAST(null AS UNKNOWN)");
+        assertFails(TYPE_MISMATCH, "SELECT CAST(1 AS MAP)");
+        assertFails(TYPE_MISMATCH, "SELECT CAST(1 AS ARRAY)");
+        assertFails(TYPE_MISMATCH, "SELECT CAST(1 AS ROW)");
 
         // arithmetic unary
         assertFails(TYPE_MISMATCH, "SELECT -'a' FROM t1");
@@ -736,7 +745,20 @@ public class TestAnalyzer
         analyze("SELECT SUM(b) FROM t1 GROUP BY ()");
         analyze("SELECT SUM(b) FROM t1 GROUP BY GROUPING SETS (())");
         analyze("SELECT a, SUM(b) FROM t1 GROUP BY GROUPING SETS (a)");
+        analyze("SELECT a, SUM(b) FROM t1 GROUP BY GROUPING SETS (a)");
         analyze("SELECT a, SUM(b) FROM t1 GROUP BY GROUPING SETS ((a, b))");
+    }
+
+    @Test
+    public void testMultipleGroupingSetMultipleColumns()
+            throws Exception
+    {
+        // TODO: validate output
+        analyze("SELECT a, SUM(b) FROM t1 GROUP BY GROUPING SETS ((a, b), (c, d))");
+        analyze("SELECT a, SUM(b) FROM t1 GROUP BY a, b, GROUPING SETS ((c, d))");
+        analyze("SELECT a, SUM(b) FROM t1 GROUP BY GROUPING SETS ((a), (c, d))");
+        analyze("SELECT a, SUM(b) FROM t1 GROUP BY GROUPING SETS ((a, b)), ROLLUP (c, d)");
+        analyze("SELECT a, SUM(b) FROM t1 GROUP BY GROUPING SETS ((a, b)), CUBE (c, d)");
     }
 
     @Test
@@ -828,6 +850,16 @@ public class TestAnalyzer
     }
 
     @Test
+    public void testShowCreateView()
+    {
+        analyze("SHOW CREATE VIEW v1");
+        analyze("SHOW CREATE VIEW v2");
+
+        assertFails(NOT_SUPPORTED, "SHOW CREATE VIEW t1");
+        assertFails(MISSING_TABLE, "SHOW CREATE VIEW none");
+    }
+
+    @Test
     public void testStaleView()
             throws Exception
     {
@@ -851,6 +883,14 @@ public class TestAnalyzer
     }
 
     @Test
+    public void testQualifiedViewColumnResolution()
+            throws Exception
+    {
+        // it should be possible to qualify the column reference with the view name
+        analyze("SELECT v1.a FROM v1");
+    }
+
+    @Test
     public void testUse()
             throws Exception
     {
@@ -861,14 +901,14 @@ public class TestAnalyzer
     public void testNotNullInJoinClause()
             throws Exception
     {
-        assertFails(NOT_SUPPORTED, "SELECT * FROM (VALUES (1)) a (x) JOIN (VALUES (2)) b ON a.x IS NOT NULL");
+        analyze("SELECT * FROM (VALUES (1)) a (x) JOIN (VALUES (2)) b ON a.x IS NOT NULL");
     }
 
     @Test
     public void testIfInJoinClause()
             throws Exception
     {
-        assertFails(NOT_SUPPORTED, "SELECT * FROM (VALUES (1)) a (x) JOIN (VALUES (2)) b ON IF(a.x = 1, true, false)");
+        analyze("SELECT * FROM (VALUES (1)) a (x) JOIN (VALUES (2)) b ON IF(a.x = 1, true, false)");
     }
 
     @Test
@@ -913,6 +953,13 @@ public class TestAnalyzer
                 .build();
         assertFails(session, SCHEMA_NOT_SPECIFIED, "SHOW TABLES");
         assertMissingInformationSchema(session, "SHOW TABLES FROM s2");
+    }
+
+    @Test
+    public void testInvalidAtTimeZone()
+            throws Exception
+    {
+        assertFails(TYPE_MISMATCH, "SELECT 'abc' AT TIME ZONE 'America/Los_Angeles'");
     }
 
     private void assertMissingInformationSchema(Session session, @Language("SQL") String query)
@@ -991,6 +1038,15 @@ public class TestAnalyzer
                         new ColumnMetadata("b", VARCHAR),
                         new ColumnMetadata("c", BIGINT),
                         new ColumnMetadata("d", BIGINT))))));
+
+        // table with bigint, double, array of bigints and array of doubles column
+        SchemaTableName table7 = new SchemaTableName("s1", "t7");
+        inSetupTransaction(session -> metadata.createTable(session, "tpch", new TableMetadata("tpch", new ConnectorTableMetadata(table7,
+                ImmutableList.of(
+                        new ColumnMetadata("a", BIGINT),
+                        new ColumnMetadata("b", DOUBLE),
+                        new ColumnMetadata("c", new ArrayType(BIGINT)),
+                        new ColumnMetadata("d", new ArrayType(DOUBLE)))))));
 
         // valid view referencing table in same schema
         String viewData1 = JsonCodec.jsonCodec(ViewDefinition.class).toJson(

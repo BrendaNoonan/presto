@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.sql.tree;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
 
 import java.util.List;
@@ -52,11 +53,17 @@ public class Cube
     }
 
     @Override
-    public Set<Set<Expression>> enumerateGroupingSets()
+    public List<Set<Expression>> enumerateGroupingSets()
     {
-        return Sets.powerSet(columns.stream()
+        return ImmutableList.copyOf(Sets.powerSet(columns.stream()
                 .map(QualifiedNameReference::new)
-                .collect(toSet()));
+                .collect(toSet())));
+    }
+
+    @Override
+    protected <R, C> R accept(AstVisitor<R, C> visitor, C context)
+    {
+        return visitor.visitCube(this, context);
     }
 
     @Override

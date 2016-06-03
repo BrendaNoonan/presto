@@ -23,7 +23,6 @@ import javax.annotation.Nullable;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
@@ -53,11 +52,13 @@ public interface JdbcClient
 
     void dropTable(JdbcTableHandle jdbcTableHandle);
 
+    void rollbackCreateTable(JdbcOutputTableHandle handle);
+
     String buildInsertSql(JdbcOutputTableHandle handle);
 
     Connection getConnection(JdbcOutputTableHandle handle)
             throws SQLException;
 
-    Statement getStatement(Connection connection)
+    PreparedStatement getPreparedStatement(Connection connection, String sql)
             throws SQLException;
 }

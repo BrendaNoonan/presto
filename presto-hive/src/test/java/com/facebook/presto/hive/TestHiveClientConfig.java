@@ -65,6 +65,7 @@ public class TestHiveClientConfig
                 .setDomainSocketPath(null)
                 .setResourceConfigFiles((String) null)
                 .setHiveStorageFormat(HiveStorageFormat.RCBINARY)
+                .setHiveCompressionCodec(HiveCompressionCodec.GZIP)
                 .setRespectTableFormat(true)
                 .setImmutablePartitions(false)
                 .setMaxPartitionsPerWriter(100)
@@ -86,13 +87,20 @@ public class TestHiveClientConfig
                 .setS3MaxConnections(500)
                 .setS3StagingDirectory(new File(StandardSystemProperty.JAVA_IO_TMPDIR.value()))
                 .setPinS3ClientToCurrentRegion(false)
-                .setOptimizedReaderEnabled(true)
                 .setParquetPredicatePushdownEnabled(false)
                 .setParquetOptimizedReaderEnabled(false)
                 .setAssumeCanonicalPartitionKeys(false)
                 .setOrcMaxMergeDistance(new DataSize(1, Unit.MEGABYTE))
                 .setOrcMaxBufferSize(new DataSize(8, Unit.MEGABYTE))
-                .setOrcStreamBufferSize(new DataSize(8, Unit.MEGABYTE)));
+                .setOrcStreamBufferSize(new DataSize(8, Unit.MEGABYTE))
+                .setHiveMetastoreAuthenticationType(HiveClientConfig.HiveMetastoreAuthenticationType.NONE)
+                .setHiveMetastoreServicePrincipal(null)
+                .setHiveMetastoreClientPrincipal(null)
+                .setHiveMetastoreClientKeytab(null)
+                .setHdfsAuthenticationType(HiveClientConfig.HdfsAuthenticationType.NONE)
+                .setHdfsImpersonationEnabled(false)
+                .setHdfsPrestoPrincipal(null)
+                .setHdfsPrestoKeytab(null));
     }
 
     @Test
@@ -126,6 +134,7 @@ public class TestHiveClientConfig
                 .put("hive.domain-compaction-threshold", "42")
                 .put("hive.recursive-directories", "true")
                 .put("hive.storage-format", "SEQUENCEFILE")
+                .put("hive.compression-codec", "NONE")
                 .put("hive.respect-table-format", "false")
                 .put("hive.immutable-partitions", "true")
                 .put("hive.max-partitions-per-writers", "222")
@@ -150,12 +159,19 @@ public class TestHiveClientConfig
                 .put("hive.s3.max-connections", "77")
                 .put("hive.s3.staging-directory", "/s3-staging")
                 .put("hive.s3.pin-client-to-current-region", "true")
-                .put("hive.optimized-reader.enabled", "false")
                 .put("hive.parquet-predicate-pushdown.enabled", "true")
                 .put("hive.parquet-optimized-reader.enabled", "true")
                 .put("hive.orc.max-merge-distance", "22kB")
                 .put("hive.orc.max-buffer-size", "44kB")
                 .put("hive.orc.stream-buffer-size", "55kB")
+                .put("hive.metastore.authentication.type", "KERBEROS")
+                .put("hive.metastore.service.principal", "hive/_HOST@EXAMPLE.COM")
+                .put("hive.metastore.client.principal", "metastore@EXAMPLE.COM")
+                .put("hive.metastore.client.keytab", "/tmp/metastore.keytab")
+                .put("hive.hdfs.authentication.type", "KERBEROS")
+                .put("hive.hdfs.impersonation.enabled", "true")
+                .put("hive.hdfs.presto.principal", "presto@EXAMPLE.COM")
+                .put("hive.hdfs.presto.keytab", "/tmp/presto.keytab")
                 .build();
 
         HiveClientConfig expected = new HiveClientConfig()
@@ -187,6 +203,7 @@ public class TestHiveClientConfig
                 .setVerifyChecksum(false)
                 .setResourceConfigFiles(ImmutableList.of("/foo.xml", "/bar.xml"))
                 .setHiveStorageFormat(HiveStorageFormat.SEQUENCEFILE)
+                .setHiveCompressionCodec(HiveCompressionCodec.NONE)
                 .setRespectTableFormat(false)
                 .setImmutablePartitions(true)
                 .setMaxPartitionsPerWriter(222)
@@ -209,13 +226,20 @@ public class TestHiveClientConfig
                 .setS3MaxConnections(77)
                 .setS3StagingDirectory(new File("/s3-staging"))
                 .setPinS3ClientToCurrentRegion(true)
-                .setOptimizedReaderEnabled(false)
                 .setParquetPredicatePushdownEnabled(true)
                 .setParquetOptimizedReaderEnabled(true)
                 .setAssumeCanonicalPartitionKeys(true)
                 .setOrcMaxMergeDistance(new DataSize(22, Unit.KILOBYTE))
                 .setOrcMaxBufferSize(new DataSize(44, Unit.KILOBYTE))
-                .setOrcStreamBufferSize(new DataSize(55, Unit.KILOBYTE));
+                .setOrcStreamBufferSize(new DataSize(55, Unit.KILOBYTE))
+                .setHiveMetastoreAuthenticationType(HiveClientConfig.HiveMetastoreAuthenticationType.KERBEROS)
+                .setHiveMetastoreServicePrincipal("hive/_HOST@EXAMPLE.COM")
+                .setHiveMetastoreClientPrincipal("metastore@EXAMPLE.COM")
+                .setHiveMetastoreClientKeytab("/tmp/metastore.keytab")
+                .setHdfsAuthenticationType(HiveClientConfig.HdfsAuthenticationType.KERBEROS)
+                .setHdfsImpersonationEnabled(true)
+                .setHdfsPrestoPrincipal("presto@EXAMPLE.COM")
+                .setHdfsPrestoKeytab("/tmp/presto.keytab");
 
         ConfigAssertions.assertFullMapping(properties, expected);
     }

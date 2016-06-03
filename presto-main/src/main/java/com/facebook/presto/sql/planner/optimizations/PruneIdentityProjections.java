@@ -34,7 +34,7 @@ import static java.util.Objects.requireNonNull;
  * Removes pure identity projections (e.g., Project $0 := $0, $1 := $1, ...)
  */
 public class PruneIdentityProjections
-        extends PlanOptimizer
+        implements PlanOptimizer
 {
     @Override
     public PlanNode optimize(PlanNode plan, Session session, Map<Symbol, Type> types, SymbolAllocator symbolAllocator, PlanNodeIdAllocator idAllocator)
@@ -56,7 +56,7 @@ public class PruneIdentityProjections
         {
             PlanNode source = context.rewrite(node.getSource());
 
-            if (node.getOutputSymbols().size() != source.getOutputSymbols().size()) {
+            if (!node.getOutputSymbols().equals(source.getOutputSymbols())) {
                 // Can't get rid of this projection. It constrains the output tuple from the underlying operator
                 return replaceChildren(node, ImmutableList.of(source));
             }

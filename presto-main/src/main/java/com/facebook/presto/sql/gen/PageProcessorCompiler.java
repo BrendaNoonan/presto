@@ -49,7 +49,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.primitives.Primitives;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -315,7 +314,9 @@ public class PageProcessorCompiler
             // if nothing is filtered out, copy the entire block, else project it
             body.append(new IfStatement()
                     .condition(equal(cardinality, positionCount))
-                    .ifTrue(outputBlock.set(inputs.get(0)))
+                    .ifTrue(new BytecodeBlock()
+                            .append(inputs.get(0).invoke("assureLoaded", void.class))
+                            .append(outputBlock.set(inputs.get(0))))
                     .ifFalse(projectBlock));
         }
         else if (isConstantExpression(projection)) {
@@ -680,7 +681,6 @@ public class PageProcessorCompiler
         return ifFilterOnRLEBlock;
     }
 
-    @NotNull
     private static BytecodeBlock getBytecodeFilterOnDictionary(
             Parameter session,
             Scope scope,
@@ -752,20 +752,19 @@ public class PageProcessorCompiler
             Parameter position = arg("position", int.class);
             Parameter wasNullVariable = arg("wasNull", boolean.class);
 
+            BytecodeExpressionVisitor innerExpressionVisitor = new BytecodeExpressionVisitor(
+                    callSiteBinder,
+                    cachedInstanceBinder,
+                    fieldReferenceCompiler(callSiteBinder, position, wasNullVariable),
+                    metadata.getFunctionRegistry(),
+                    tryMethodMap.build());
+
             List<Parameter> inputParameters = ImmutableList.<Parameter>builder()
                     .add(session)
                     .addAll(blocks)
                     .add(position)
                     .add(wasNullVariable)
                     .build();
-
-            BytecodeExpressionVisitor innerExpressionVisitor = new BytecodeExpressionVisitor(
-                    callSiteBinder,
-                    cachedInstanceBinder,
-                    fieldReferenceCompiler(callSiteBinder, position, wasNullVariable),
-                    metadata.getFunctionRegistry(),
-                    inputParameters,
-                    tryMethodMap.build());
 
             MethodDefinition tryMethod = defineTryMethod(
                     innerExpressionVisitor,
@@ -791,17 +790,15 @@ public class PageProcessorCompiler
         List<Parameter> blocks = toBlockParameters(getInputChannels(filter));
         Parameter position = arg("position", int.class);
 
-        List<Parameter> expressionInputs = ImmutableList.<Parameter>builder()
-                .add(session)
-                .addAll(blocks)
-                .add(position)
-                .build();
-
         MethodDefinition method = classDefinition.declareMethod(
                 a(PUBLIC),
                 "filter",
                 type(boolean.class),
-                expressionInputs);
+                ImmutableList.<Parameter>builder()
+                        .add(session)
+                        .addAll(blocks)
+                        .add(position)
+                        .build());
 
         method.comment("Filter: %s", filter.toString());
         BytecodeBlock body = method.getBody();
@@ -814,10 +811,6 @@ public class PageProcessorCompiler
                 cachedInstanceBinder,
                 fieldReferenceCompiler(callSiteBinder, position, wasNullVariable),
                 metadata.getFunctionRegistry(),
-                ImmutableList.<Variable>builder()
-                        .addAll(expressionInputs)
-                        .add(wasNullVariable)
-                        .build(),
                 tryMethodMap);
 
         BytecodeNode visitorBody = filter.accept(visitor, scope);
@@ -840,18 +833,14 @@ public class PageProcessorCompiler
         Parameter position = arg("position", int.class);
         Parameter output = arg("output", BlockBuilder.class);
 
-        List<Parameter> expressionInputs = ImmutableList.<Parameter>builder()
-                .add(session)
-                .addAll(blocks)
-                .add(position)
-                .build();
-
         MethodDefinition method = classDefinition.declareMethod(
                 a(PUBLIC),
                 methodName,
                 type(void.class),
                 ImmutableList.<Parameter>builder()
-                        .addAll(expressionInputs)
+                        .add(session)
+                        .addAll(blocks)
+                        .add(position)
                         .add(output)
                         .build());
 
@@ -866,10 +855,6 @@ public class PageProcessorCompiler
                 cachedInstanceBinder,
                 fieldReferenceCompiler(callSiteBinder, position, wasNullVariable),
                 metadata.getFunctionRegistry(),
-                ImmutableList.<Variable>builder()
-                    .addAll(expressionInputs)
-                    .add(wasNullVariable)
-                    .build(),
                 tryMethodMap
         );
 

@@ -23,9 +23,12 @@ import com.facebook.presto.security.AccessControl;
 import com.facebook.presto.security.DenyAllAccessControl;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.StandardErrorCode;
+import com.facebook.presto.spi.type.DecimalParseResult;
+import com.facebook.presto.spi.type.Decimals;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeManager;
 import com.facebook.presto.spi.type.TypeSignature;
+import com.facebook.presto.spi.type.TypeSignatureParameter;
 import com.facebook.presto.spi.type.VarcharType;
 import com.facebook.presto.sql.parser.SqlParser;
 import com.facebook.presto.sql.planner.DependencyExtractor;
@@ -33,6 +36,7 @@ import com.facebook.presto.sql.planner.Symbol;
 import com.facebook.presto.sql.tree.ArithmeticBinaryExpression;
 import com.facebook.presto.sql.tree.ArithmeticUnaryExpression;
 import com.facebook.presto.sql.tree.ArrayConstructor;
+import com.facebook.presto.sql.tree.AtTimeZone;
 import com.facebook.presto.sql.tree.BetweenPredicate;
 import com.facebook.presto.sql.tree.BinaryLiteral;
 import com.facebook.presto.sql.tree.BooleanLiteral;
@@ -40,16 +44,17 @@ import com.facebook.presto.sql.tree.Cast;
 import com.facebook.presto.sql.tree.CoalesceExpression;
 import com.facebook.presto.sql.tree.ComparisonExpression;
 import com.facebook.presto.sql.tree.CurrentTime;
+import com.facebook.presto.sql.tree.DecimalLiteral;
 import com.facebook.presto.sql.tree.DereferenceExpression;
 import com.facebook.presto.sql.tree.DoubleLiteral;
 import com.facebook.presto.sql.tree.Expression;
 import com.facebook.presto.sql.tree.Extract;
+import com.facebook.presto.sql.tree.FieldReference;
 import com.facebook.presto.sql.tree.FunctionCall;
 import com.facebook.presto.sql.tree.GenericLiteral;
 import com.facebook.presto.sql.tree.IfExpression;
 import com.facebook.presto.sql.tree.InListExpression;
 import com.facebook.presto.sql.tree.InPredicate;
-import com.facebook.presto.sql.tree.InputReference;
 import com.facebook.presto.sql.tree.IntervalLiteral;
 import com.facebook.presto.sql.tree.IsNotNullPredicate;
 import com.facebook.presto.sql.tree.IsNullPredicate;
@@ -97,12 +102,15 @@ import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.spi.type.DateType.DATE;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
+import static com.facebook.presto.spi.type.IntegerType.INTEGER;
 import static com.facebook.presto.spi.type.IntervalDayTimeType.INTERVAL_DAY_TIME;
 import static com.facebook.presto.spi.type.IntervalYearMonthType.INTERVAL_YEAR_MONTH;
+import static com.facebook.presto.spi.type.SmallintType.SMALLINT;
 import static com.facebook.presto.spi.type.TimeType.TIME;
 import static com.facebook.presto.spi.type.TimeWithTimeZoneType.TIME_WITH_TIME_ZONE;
 import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
 import static com.facebook.presto.spi.type.TimestampWithTimeZoneType.TIMESTAMP_WITH_TIME_ZONE;
+import static com.facebook.presto.spi.type.TinyintType.TINYINT;
 import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
 import static com.facebook.presto.spi.type.VarbinaryType.VARBINARY;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
@@ -118,8 +126,6 @@ import static com.facebook.presto.sql.tree.Extract.Field.TIMEZONE_MINUTE;
 import static com.facebook.presto.type.ArrayParametricType.ARRAY;
 import static com.facebook.presto.type.JsonType.JSON;
 import static com.facebook.presto.type.RowType.RowField;
-import static com.facebook.presto.type.TypeRegistry.canCoerce;
-import static com.facebook.presto.type.TypeRegistry.getCommonSuperTypeSignature;
 import static com.facebook.presto.type.UnknownType.UNKNOWN;
 import static com.facebook.presto.util.DateTimeUtils.parseTimestampLiteral;
 import static com.facebook.presto.util.DateTimeUtils.timeHasTimeZone;
@@ -140,6 +146,7 @@ public class ExpressionAnalyzer
     private final IdentityHashMap<Expression, Type> expressionTypes = new IdentityHashMap<>();
     private final Set<SubqueryExpression> scalarSubqueries = newIdentityHashSet();
     private final IdentityHashMap<Expression, Type> expressionCoercions = new IdentityHashMap<>();
+    private final Set<Expression> typeOnlyCoercions = newIdentityHashSet();
     private final Set<InPredicate> subqueryInPredicates = newIdentityHashSet();
     private final Session session;
 
@@ -169,6 +176,11 @@ public class ExpressionAnalyzer
     public IdentityHashMap<Expression, Type> getExpressionCoercions()
     {
         return expressionCoercions;
+    }
+
+    public Set<Expression> getTypeOnlyCoercions()
+    {
+        return typeOnlyCoercions;
     }
 
     public Set<InPredicate> getSubqueryInPredicates()
@@ -302,7 +314,12 @@ public class ExpressionAnalyzer
                     return field.getType();
                 }
 
-                assertColumnPrefix(qualifiedName, node);
+                if (!isColumnPrefix(qualifiedName, tupleDescriptor)) {
+                    if (isReferenceToOuterRelation(context.getContext(), qualifiedName)) {
+                        throw new SemanticException(NOT_SUPPORTED, node, "Correlated queries not yet supported. Invalid column reference: '%s'", qualifiedName);
+                    }
+                    throw createMissingAttributeException(node);
+                }
             }
 
             Type baseType = process(node.getBase(), context);
@@ -314,7 +331,7 @@ public class ExpressionAnalyzer
 
             Type rowFieldType = null;
             for (RowField rowField : rowType.getFields()) {
-                if (rowField.getName().equals(Optional.of(node.getFieldName()))) {
+                if (node.getFieldName().equalsIgnoreCase(rowField.getName().orElse(null))) {
                     rowFieldType = rowField.getType();
                     break;
                 }
@@ -327,19 +344,33 @@ public class ExpressionAnalyzer
             return rowFieldType;
         }
 
-        private void assertColumnPrefix(QualifiedName qualifiedName, Expression node)
+        private boolean isColumnPrefix(QualifiedName qualifiedName, RelationType tupleDescriptor)
         {
             // Recursively check if its prefix is a column.
             while (qualifiedName.getPrefix().isPresent()) {
                 qualifiedName = qualifiedName.getPrefix().get();
                 List<Field> matches = tupleDescriptor.resolveFields(qualifiedName);
                 if (!matches.isEmpty()) {
-                    // The AMBIGUOUS_ATTRIBUTE exception will be thrown later with the right node if matches.size() > 1
-                    return;
+                    return true;
                 }
             }
+            return false;
+        }
 
-            throw createMissingAttributeException(node);
+        private boolean isReferenceToOuterRelation(AnalysisContext context, QualifiedName qualifiedName)
+        {
+            AnalysisContext current = context;
+            while (current != null) {
+                RelationType type = current.getParentRelationType();
+                if (!type.resolveFields(qualifiedName).isEmpty()) {
+                    return true;
+                }
+                if (isColumnPrefix(qualifiedName, type)) {
+                    return true;
+                }
+                current = current.getParent().orElse(null);
+            }
+            return false;
         }
 
         private SemanticException createMissingAttributeException(Expression node)
@@ -403,7 +434,7 @@ public class ExpressionAnalyzer
             Type firstType = process(node.getFirst(), context);
             Type secondType = process(node.getSecond(), context);
 
-            if (!getCommonSuperTypeSignature(firstType.getTypeSignature(), secondType.getTypeSignature()).isPresent()) {
+            if (!typeManager.getCommonSuperType(firstType, secondType).isPresent()) {
                 throw new SemanticException(TYPE_MISMATCH, node, "Types are not comparable with NULLIF: %s vs %s", firstType, secondType);
             }
 
@@ -496,7 +527,7 @@ public class ExpressionAnalyzer
                 case PLUS:
                     Type type = process(node.getValue(), context);
 
-                    if (!type.equals(BIGINT) && !type.equals(DOUBLE)) {
+                    if (!type.equals(DOUBLE) && !type.equals(BIGINT) && !type.equals(INTEGER) && !type.equals(SMALLINT) && !type.equals(TINYINT)) {
                         // TODO: figure out a type-agnostic way of dealing with this. Maybe add a special unary operator
                         // that types can chose to implement, or piggyback on the existence of the negation operator
                         throw new SemanticException(TYPE_MISMATCH, node, "Unary '+' operator cannot by applied to %s type", type);
@@ -551,7 +582,7 @@ public class ExpressionAnalyzer
         protected Type visitArrayConstructor(ArrayConstructor node, StackableAstVisitorContext<AnalysisContext> context)
         {
             Type type = coerceToSingleType(context, "All ARRAY elements must be the same type: %s", node.getValues());
-            Type arrayType = typeManager.getParameterizedType(ARRAY.getName(), ImmutableList.of(type.getTypeSignature()), ImmutableList.of());
+            Type arrayType = typeManager.getParameterizedType(ARRAY.getName(), ImmutableList.of(TypeSignatureParameter.of(type.getTypeSignature())));
             expressionTypes.put(node, arrayType);
             return arrayType;
         }
@@ -574,6 +605,11 @@ public class ExpressionAnalyzer
         @Override
         protected Type visitLongLiteral(LongLiteral node, StackableAstVisitorContext<AnalysisContext> context)
         {
+            if (node.getValue() >= Integer.MIN_VALUE && node.getValue() <= Integer.MAX_VALUE) {
+                expressionTypes.put(node, INTEGER);
+                return INTEGER;
+            }
+
             expressionTypes.put(node, BIGINT);
             return BIGINT;
         }
@@ -583,6 +619,14 @@ public class ExpressionAnalyzer
         {
             expressionTypes.put(node, DOUBLE);
             return DOUBLE;
+        }
+
+        @Override
+        protected Type visitDecimalLiteral(DecimalLiteral node, StackableAstVisitorContext<AnalysisContext> context)
+        {
+            DecimalParseResult parseResult = Decimals.parse(node.getValue());
+            expressionTypes.put(node, parseResult.getType());
+            return parseResult.getType();
         }
 
         @Override
@@ -694,15 +738,15 @@ public class ExpressionAnalyzer
 
                     if (frame.getStart().getValue().isPresent()) {
                         Type type = process(frame.getStart().getValue().get(), context);
-                        if (!type.equals(BIGINT)) {
-                            throw new SemanticException(TYPE_MISMATCH, node, "Window frame start value type must be BIGINT (actual %s)", type);
+                        if (!type.equals(INTEGER) && !type.equals(BIGINT)) {
+                            throw new SemanticException(TYPE_MISMATCH, node, "Window frame start value type must be INTEGER or BIGINT(actual %s)", type);
                         }
                     }
 
                     if (frame.getEnd().isPresent() && frame.getEnd().get().getValue().isPresent()) {
                         Type type = process(frame.getEnd().get().getValue().get(), context);
-                        if (!type.equals(BIGINT)) {
-                            throw new SemanticException(TYPE_MISMATCH, node, "Window frame end value type must be BIGINT (actual %s)", type);
+                        if (!type.equals(INTEGER) && !type.equals(BIGINT)) {
+                            throw new SemanticException(TYPE_MISMATCH, node, "Window frame end value type must be INTEGER or BIGINT (actual %s)", type);
                         }
                     }
                 }
@@ -720,6 +764,9 @@ public class ExpressionAnalyzer
             catch (PrestoException e) {
                 if (e.getErrorCode().getCode() == StandardErrorCode.FUNCTION_NOT_FOUND.toErrorCode().getCode()) {
                     throw new SemanticException(SemanticErrorCode.FUNCTION_NOT_FOUND, node, e.getMessage());
+                }
+                if (e.getErrorCode().getCode() == StandardErrorCode.AMBIGUOUS_FUNCTION_CALL.toErrorCode().getCode()) {
+                    throw new SemanticException(SemanticErrorCode.AMBIGUOUS_FUNCTION_CALL, node, e.getMessage());
                 }
                 throw e;
             }
@@ -739,6 +786,26 @@ public class ExpressionAnalyzer
             expressionTypes.put(node, type);
 
             return type;
+        }
+
+        @Override
+        protected Type visitAtTimeZone(AtTimeZone node, StackableAstVisitorContext<AnalysisContext> context)
+        {
+            Type valueType = process(node.getValue(), context);
+            process(node.getTimeZone(), context);
+            if (!valueType.equals(TIME_WITH_TIME_ZONE) && !valueType.equals(TIMESTAMP_WITH_TIME_ZONE) && !valueType.equals(TIME) && !valueType.equals(TIMESTAMP)) {
+                throw new SemanticException(TYPE_MISMATCH, node.getValue(), "Type of value must be a time or timestamp with or without time zone (actual %s)", valueType);
+            }
+            Type resultType = valueType;
+            if (valueType.equals(TIME)) {
+                resultType = TIME_WITH_TIME_ZONE;
+            }
+            else if (valueType.equals(TIMESTAMP)) {
+                resultType = TIMESTAMP_WITH_TIME_ZONE;
+            }
+            expressionTypes.put(node, resultType);
+
+            return resultType;
         }
 
         @Override
@@ -845,7 +912,7 @@ public class ExpressionAnalyzer
         protected Type visitSubqueryExpression(SubqueryExpression node, StackableAstVisitorContext<AnalysisContext> context)
         {
             StatementAnalyzer analyzer = statementAnalyzerFactory.apply(node);
-            RelationType descriptor = analyzer.process(node.getQuery(), context.getContext());
+            RelationType descriptor = analyzer.process(node.getQuery(), new AnalysisContext(context.getContext(), tupleDescriptor));
 
             // Subquery should only produce one column
             if (descriptor.getVisibleFieldCount() != 1) {
@@ -869,9 +936,9 @@ public class ExpressionAnalyzer
         }
 
         @Override
-        public Type visitInputReference(InputReference node, StackableAstVisitorContext<AnalysisContext> context)
+        public Type visitFieldReference(FieldReference node, StackableAstVisitorContext<AnalysisContext> context)
         {
-            Type type = tupleDescriptor.getFieldByIndex(node.getChannel()).getType();
+            Type type = tupleDescriptor.getFieldByIndex(node.getFieldIndex()).getType();
             expressionTypes.put(node, type);
             return type;
         }
@@ -896,6 +963,12 @@ public class ExpressionAnalyzer
             catch (OperatorNotFoundException e) {
                 throw new SemanticException(TYPE_MISMATCH, node, "%s", e.getMessage());
             }
+            catch (PrestoException e) {
+                if (e.getErrorCode().getCode() == StandardErrorCode.AMBIGUOUS_FUNCTION_CALL.toErrorCode().getCode()) {
+                    throw new SemanticException(SemanticErrorCode.AMBIGUOUS_FUNCTION_CALL, node, e.getMessage());
+                }
+                throw e;
+            }
 
             for (int i = 0; i < arguments.length; i++) {
                 Expression expression = arguments[i];
@@ -913,10 +986,13 @@ public class ExpressionAnalyzer
         {
             Type actualType = process(expression, context);
             if (!actualType.equals(expectedType)) {
-                if (!canCoerce(actualType, expectedType)) {
+                if (!typeManager.canCoerce(actualType, expectedType)) {
                     throw new SemanticException(TYPE_MISMATCH, expression, message + " must evaluate to a %s (actual: %s)", expectedType, actualType);
                 }
                 expressionCoercions.put(expression, expectedType);
+                if (typeManager.isTypeOnlyCoercion(actualType, expectedType)) {
+                    typeOnlyCoercions.add(expression);
+                }
             }
         }
 
@@ -942,12 +1018,18 @@ public class ExpressionAnalyzer
             }
 
             // coerce types if possible
-            if (canCoerce(firstType, secondType)) {
+            if (typeManager.canCoerce(firstType, secondType)) {
                 expressionCoercions.put(first, secondType);
+                if (typeManager.isTypeOnlyCoercion(firstType, secondType)) {
+                    typeOnlyCoercions.add(first);
+                }
                 return secondType;
             }
-            if (canCoerce(secondType, firstType)) {
+            if (typeManager.canCoerce(secondType, firstType)) {
                 expressionCoercions.put(second, firstType);
+                if (typeManager.isTypeOnlyCoercion(secondType, firstType)) {
+                    typeOnlyCoercions.add(second);
+                }
                 return firstType;
             }
             throw new SemanticException(TYPE_MISMATCH, node, message, firstType, secondType);
@@ -969,10 +1051,13 @@ public class ExpressionAnalyzer
             for (Expression expression : expressions) {
                 Type type = process(expression, context);
                 if (!type.equals(superType)) {
-                    if (!canCoerce(type, superType)) {
+                    if (!typeManager.canCoerce(type, superType)) {
                         throw new SemanticException(TYPE_MISMATCH, expression, message, superType);
                     }
                     expressionCoercions.put(expression, superType);
+                    if (typeManager.isTypeOnlyCoercion(type, superType)) {
+                        typeOnlyCoercions.add(expression);
+                    }
                 }
             }
 
@@ -1073,7 +1158,8 @@ public class ExpressionAnalyzer
                 analyzer.getExpressionCoercions(),
                 analyzer.getSubqueryInPredicates(),
                 analyzer.getScalarSubqueries(),
-                analyzer.getResolvedNames().keySet());
+                analyzer.getResolvedNames().keySet(),
+                analyzer.getTypeOnlyCoercions());
     }
 
     public static ExpressionAnalysis analyzeExpression(
@@ -1092,10 +1178,11 @@ public class ExpressionAnalyzer
 
         IdentityHashMap<Expression, Type> expressionTypes = analyzer.getExpressionTypes();
         IdentityHashMap<Expression, Type> expressionCoercions = analyzer.getExpressionCoercions();
+        Set<Expression> typeOnlyCoercions = analyzer.getTypeOnlyCoercions();
         IdentityHashMap<FunctionCall, Signature> resolvedFunctions = analyzer.getResolvedFunctions();
 
         analysis.addTypes(expressionTypes);
-        analysis.addCoercions(expressionCoercions);
+        analysis.addCoercions(expressionCoercions, typeOnlyCoercions);
         analysis.addFunctionSignatures(resolvedFunctions);
 
         analysis.addResolvedNames(analyzer.getResolvedNames());
@@ -1105,7 +1192,8 @@ public class ExpressionAnalyzer
                 expressionCoercions,
                 analyzer.getSubqueryInPredicates(),
                 analyzer.getScalarSubqueries(),
-                analyzer.getColumnReferences());
+                analyzer.getColumnReferences(),
+                analyzer.getTypeOnlyCoercions());
     }
 
     public static ExpressionAnalyzer create(

@@ -20,7 +20,9 @@ import com.facebook.presto.transaction.TransactionManager;
 import io.airlift.units.Duration;
 
 import java.net.URI;
+import java.util.Optional;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 
 import static com.facebook.presto.memory.LocalMemoryManager.GENERAL_POOL;
 import static java.util.Objects.requireNonNull;
@@ -37,7 +39,7 @@ public class FailedQueryExecution
         this.session = requireNonNull(session, "session is null");
         QueryStateMachine queryStateMachine = QueryStateMachine.failed(queryId, query, session, self, transactionManager, executor, cause);
 
-        queryInfo = queryStateMachine.getQueryInfo(null);
+        queryInfo = queryStateMachine.getQueryInfo(Optional.empty());
     }
 
     @Override
@@ -77,6 +79,12 @@ public class FailedQueryExecution
     }
 
     @Override
+    public Duration getTotalCpuTime()
+    {
+        return new Duration(0, TimeUnit.SECONDS);
+    }
+
+    @Override
     public Session getSession()
     {
         return session;
@@ -103,6 +111,12 @@ public class FailedQueryExecution
 
     @Override
     public void fail(Throwable cause)
+    {
+        // no-op
+    }
+
+    @Override
+    public void cancelQuery()
     {
         // no-op
     }

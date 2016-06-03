@@ -35,7 +35,7 @@ public class QueryManagerConfig
     private int maxQueuedQueries = 5000;
     private String queueConfigFile;
 
-    private int initialHashPartitions = 8;
+    private int initialHashPartitions = 100;
     private Duration maxQueryAge = new Duration(15, TimeUnit.MINUTES);
     private int maxQueryHistory = 100;
     private Duration clientTimeout = new Duration(5, TimeUnit.MINUTES);
@@ -47,6 +47,7 @@ public class QueryManagerConfig
 
     private String queryExecutionPolicy = "all-at-once";
     private Duration queryMaxRunTime = new Duration(100, TimeUnit.DAYS);
+    private Duration queryMaxCpuTime = new Duration(1_000_000_000, TimeUnit.DAYS);
 
     public String getQueueConfigFile()
     {
@@ -193,6 +194,20 @@ public class QueryManagerConfig
     public QueryManagerConfig setQueryMaxRunTime(Duration queryMaxRunTime)
     {
         this.queryMaxRunTime = queryMaxRunTime;
+        return this;
+    }
+
+    @NotNull
+    @MinDuration("1ns")
+    public Duration getQueryMaxCpuTime()
+    {
+        return queryMaxCpuTime;
+    }
+
+    @Config("query.max-cpu-time")
+    public QueryManagerConfig setQueryMaxCpuTime(Duration queryMaxCpuTime)
+    {
+        this.queryMaxCpuTime = queryMaxCpuTime;
         return this;
     }
 

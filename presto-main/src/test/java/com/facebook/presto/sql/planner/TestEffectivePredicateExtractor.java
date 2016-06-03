@@ -21,6 +21,7 @@ import com.facebook.presto.spi.block.SortOrder;
 import com.facebook.presto.spi.predicate.Domain;
 import com.facebook.presto.spi.predicate.TupleDomain;
 import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.type.TypeSignature;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
 import com.facebook.presto.sql.planner.plan.FilterNode;
 import com.facebook.presto.sql.planner.plan.JoinNode;
@@ -40,6 +41,7 @@ import com.facebook.presto.sql.tree.Expression;
 import com.facebook.presto.sql.tree.ExpressionTreeRewriter;
 import com.facebook.presto.sql.tree.FrameBound;
 import com.facebook.presto.sql.tree.FunctionCall;
+import com.facebook.presto.sql.tree.GenericLiteral;
 import com.facebook.presto.sql.tree.IsNullPredicate;
 import com.facebook.presto.sql.tree.LongLiteral;
 import com.facebook.presto.sql.tree.QualifiedName;
@@ -142,14 +144,15 @@ public class TestEffectivePredicateExtractor
                                 equals(AE, DE),
                                 equals(BE, EE),
                                 equals(CE, FE),
-                                lessThan(DE, number(10)),
+                                lessThan(DE, bigintLiteral(10)),
                                 lessThan(CE, DE),
-                                greaterThan(AE, number(2)),
+                                greaterThan(AE, bigintLiteral(2)),
                                 equals(EE, FE))),
                 ImmutableList.of(A, B, C),
                 ImmutableMap.of(C, fakeFunction("test"), D, fakeFunction("test")),
                 ImmutableMap.of(C, fakeFunctionHandle("test", AGGREGATE), D, fakeFunctionHandle("test", AGGREGATE)),
                 ImmutableMap.<Symbol, Symbol>of(),
+                ImmutableList.of(ImmutableList.of(A, B, C)),
                 AggregationNode.Step.FINAL,
                 Optional.empty(),
                 1.0,
@@ -160,9 +163,9 @@ public class TestEffectivePredicateExtractor
         // Rewrite in terms of group by symbols
         assertEquals(normalizeConjuncts(effectivePredicate),
                 normalizeConjuncts(
-                        lessThan(AE, number(10)),
+                        lessThan(AE, bigintLiteral(10)),
                         lessThan(BE, AE),
-                        greaterThan(AE, number(2)),
+                        greaterThan(AE, bigintLiteral(2)),
                         equals(BE, CE)));
     }
 
@@ -173,13 +176,13 @@ public class TestEffectivePredicateExtractor
         PlanNode node = filter(baseTableScan,
                 and(
                         greaterThan(AE, new FunctionCall(QualifiedName.of("rand"), ImmutableList.<Expression>of())),
-                        lessThan(BE, number(10))));
+                        lessThan(BE, bigintLiteral(10))));
 
         Expression effectivePredicate = EffectivePredicateExtractor.extract(node, TYPES);
 
         // Non-deterministic functions should be purged
         assertEquals(normalizeConjuncts(effectivePredicate),
-                normalizeConjuncts(lessThan(BE, number(10))));
+                normalizeConjuncts(lessThan(BE, bigintLiteral(10))));
     }
 
     @Test
@@ -191,7 +194,7 @@ public class TestEffectivePredicateExtractor
                         and(
                                 equals(AE, BE),
                                 equals(BE, CE),
-                                lessThan(CE, number(10)))),
+                                lessThan(CE, bigintLiteral(10)))),
                 ImmutableMap.of(D, AE, E, CE));
 
         Expression effectivePredicate = EffectivePredicateExtractor.extract(node, TYPES);
@@ -199,7 +202,7 @@ public class TestEffectivePredicateExtractor
         // Rewrite in terms of project output symbols
         assertEquals(normalizeConjuncts(effectivePredicate),
                 normalizeConjuncts(
-                        lessThan(DE, number(10)),
+                        lessThan(DE, bigintLiteral(10)),
                         equals(DE, EE)));
     }
 
@@ -212,7 +215,7 @@ public class TestEffectivePredicateExtractor
                         and(
                                 equals(AE, BE),
                                 equals(BE, CE),
-                                lessThan(CE, number(10)))),
+                                lessThan(CE, bigintLiteral(10)))),
                 1, ImmutableList.of(A), ImmutableMap.of(A, SortOrder.ASC_NULLS_LAST), true);
 
         Expression effectivePredicate = EffectivePredicateExtractor.extract(node, TYPES);
@@ -222,7 +225,7 @@ public class TestEffectivePredicateExtractor
                 normalizeConjuncts(
                         equals(AE, BE),
                         equals(BE, CE),
-                        lessThan(CE, number(10))));
+                        lessThan(CE, bigintLiteral(10))));
     }
 
     @Test
@@ -234,8 +237,9 @@ public class TestEffectivePredicateExtractor
                         and(
                                 equals(AE, BE),
                                 equals(BE, CE),
-                                lessThan(CE, number(10)))),
-                1);
+                                lessThan(CE, bigintLiteral(10)))),
+                1,
+                false);
 
         Expression effectivePredicate = EffectivePredicateExtractor.extract(node, TYPES);
 
@@ -244,7 +248,7 @@ public class TestEffectivePredicateExtractor
                 normalizeConjuncts(
                         equals(AE, BE),
                         equals(BE, CE),
-                        lessThan(CE, number(10))));
+                        lessThan(CE, bigintLiteral(10))));
     }
 
     @Test
@@ -256,7 +260,7 @@ public class TestEffectivePredicateExtractor
                         and(
                                 equals(AE, BE),
                                 equals(BE, CE),
-                                lessThan(CE, number(10)))),
+                                lessThan(CE, bigintLiteral(10)))),
                 ImmutableList.of(A), ImmutableMap.of(A, SortOrder.ASC_NULLS_LAST));
 
         Expression effectivePredicate = EffectivePredicateExtractor.extract(node, TYPES);
@@ -266,7 +270,7 @@ public class TestEffectivePredicateExtractor
                 normalizeConjuncts(
                         equals(AE, BE),
                         equals(BE, CE),
-                        lessThan(CE, number(10))));
+                        lessThan(CE, bigintLiteral(10))));
     }
 
     @Test
@@ -278,13 +282,14 @@ public class TestEffectivePredicateExtractor
                         and(
                                 equals(AE, BE),
                                 equals(BE, CE),
-                                lessThan(CE, number(10)))),
-                ImmutableList.of(A),
-                ImmutableList.of(A),
-                ImmutableMap.of(A, SortOrder.ASC_NULLS_LAST),
-                new WindowNode.Frame(WindowFrame.Type.RANGE,
-                        FrameBound.Type.UNBOUNDED_PRECEDING, Optional.empty(),
-                        FrameBound.Type.CURRENT_ROW, Optional.empty()),
+                                lessThan(CE, bigintLiteral(10)))),
+                new WindowNode.Specification(
+                        ImmutableList.of(A),
+                        ImmutableList.of(A),
+                        ImmutableMap.of(A, SortOrder.ASC_NULLS_LAST),
+                        new WindowNode.Frame(WindowFrame.Type.RANGE,
+                                FrameBound.Type.UNBOUNDED_PRECEDING, Optional.empty(),
+                                FrameBound.Type.CURRENT_ROW, Optional.empty())),
                 ImmutableMap.<Symbol, FunctionCall>of(),
                 ImmutableMap.<Symbol, Signature>of(),
                 Optional.empty(),
@@ -298,7 +303,7 @@ public class TestEffectivePredicateExtractor
                 normalizeConjuncts(
                         equals(AE, BE),
                         equals(BE, CE),
-                        lessThan(CE, number(10))));
+                        lessThan(CE, bigintLiteral(10))));
     }
 
     @Test
@@ -338,7 +343,7 @@ public class TestEffectivePredicateExtractor
                 TupleDomain.withColumnDomains(ImmutableMap.of(scanAssignments.get(A), Domain.singleValue(BIGINT, 1L))),
                 null);
         effectivePredicate = EffectivePredicateExtractor.extract(node, TYPES);
-        assertEquals(normalizeConjuncts(effectivePredicate), normalizeConjuncts(equals(number(1L), AE)));
+        assertEquals(normalizeConjuncts(effectivePredicate), normalizeConjuncts(equals(bigintLiteral(1L), AE)));
 
         node = new TableScanNode(
                 newId(),
@@ -351,7 +356,7 @@ public class TestEffectivePredicateExtractor
                         scanAssignments.get(B), Domain.singleValue(BIGINT, 2L))),
                 null);
         effectivePredicate = EffectivePredicateExtractor.extract(node, TYPES);
-        assertEquals(normalizeConjuncts(effectivePredicate), normalizeConjuncts(equals(number(2L), BE), equals(number(1L), AE)));
+        assertEquals(normalizeConjuncts(effectivePredicate), normalizeConjuncts(equals(bigintLiteral(2L), BE), equals(bigintLiteral(1L), AE)));
 
         node = new TableScanNode(
                 newId(),
@@ -372,9 +377,9 @@ public class TestEffectivePredicateExtractor
         ImmutableListMultimap<Symbol, Symbol> symbolMapping = ImmutableListMultimap.of(A, B, A, C, A, E);
         PlanNode node = new UnionNode(newId(),
                 ImmutableList.<PlanNode>of(
-                        filter(baseTableScan, greaterThan(AE, number(10))),
-                        filter(baseTableScan, and(greaterThan(AE, number(10)), lessThan(AE, number(100)))),
-                        filter(baseTableScan, and(greaterThan(AE, number(10)), lessThan(AE, number(100))))
+                        filter(baseTableScan, greaterThan(AE, bigintLiteral(10))),
+                        filter(baseTableScan, and(greaterThan(AE, bigintLiteral(10)), lessThan(AE, bigintLiteral(100)))),
+                        filter(baseTableScan, and(greaterThan(AE, bigintLiteral(10)), lessThan(AE, bigintLiteral(100))))
                 ),
                 symbolMapping,
                 ImmutableList.copyOf(symbolMapping.keySet()));
@@ -383,7 +388,7 @@ public class TestEffectivePredicateExtractor
 
         // Only the common conjuncts can be inferred through a Union
         assertEquals(normalizeConjuncts(effectivePredicate),
-                normalizeConjuncts(greaterThan(AE, number(10))));
+                normalizeConjuncts(greaterThan(AE, bigintLiteral(10))));
     }
 
     @Test
@@ -422,12 +427,13 @@ public class TestEffectivePredicateExtractor
                 filter(leftScan,
                         and(
                                 lessThan(BE, AE),
-                                lessThan(CE, number(10)))),
+                                lessThan(CE, bigintLiteral(10)))),
                 filter(rightScan,
                         and(
                                 equals(DE, EE),
-                                lessThan(FE, number(100)))),
+                                lessThan(FE, bigintLiteral(100)))),
                 criteria,
+                Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
 
@@ -436,9 +442,9 @@ public class TestEffectivePredicateExtractor
         // All predicates should be carried through
         assertEquals(normalizeConjuncts(effectivePredicate),
                 normalizeConjuncts(lessThan(BE, AE),
-                        lessThan(CE, number(10)),
+                        lessThan(CE, bigintLiteral(10)),
                         equals(DE, EE),
-                        lessThan(FE, number(100)),
+                        lessThan(FE, bigintLiteral(100)),
                         equals(AE, DE),
                         equals(BE, EE)));
     }
@@ -479,12 +485,13 @@ public class TestEffectivePredicateExtractor
                 filter(leftScan,
                         and(
                                 lessThan(BE, AE),
-                                lessThan(CE, number(10)))),
+                                lessThan(CE, bigintLiteral(10)))),
                 filter(rightScan,
                         and(
                                 equals(DE, EE),
-                                lessThan(FE, number(100)))),
+                                lessThan(FE, bigintLiteral(100)))),
                 criteria,
+                Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
 
@@ -493,9 +500,9 @@ public class TestEffectivePredicateExtractor
         // All right side symbols should be checked against NULL
         assertEquals(normalizeConjuncts(effectivePredicate),
                 normalizeConjuncts(lessThan(BE, AE),
-                        lessThan(CE, number(10)),
+                        lessThan(CE, bigintLiteral(10)),
                         or(equals(DE, EE), and(isNull(DE), isNull(EE))),
-                        or(lessThan(FE, number(100)), isNull(FE)),
+                        or(lessThan(FE, bigintLiteral(100)), isNull(FE)),
                         or(equals(AE, DE), isNull(DE)),
                         or(equals(BE, EE), isNull(EE))));
     }
@@ -533,9 +540,10 @@ public class TestEffectivePredicateExtractor
                 filter(leftScan,
                         and(
                                 lessThan(BE, AE),
-                                lessThan(CE, number(10)))),
+                                lessThan(CE, bigintLiteral(10)))),
                 filter(rightScan, FALSE_LITERAL),
                 criteria,
+                Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
 
@@ -544,7 +552,7 @@ public class TestEffectivePredicateExtractor
         // False literal on the right side should be ignored
         assertEquals(normalizeConjuncts(effectivePredicate),
                 normalizeConjuncts(lessThan(BE, AE),
-                        lessThan(CE, number(10)),
+                        lessThan(CE, bigintLiteral(10)),
                         or(equals(AE, DE), isNull(DE))));
     }
 
@@ -584,12 +592,13 @@ public class TestEffectivePredicateExtractor
                 filter(leftScan,
                         and(
                                 lessThan(BE, AE),
-                                lessThan(CE, number(10)))),
+                                lessThan(CE, bigintLiteral(10)))),
                 filter(rightScan,
                         and(
                                 equals(DE, EE),
-                                lessThan(FE, number(100)))),
+                                lessThan(FE, bigintLiteral(100)))),
                 criteria,
+                Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
 
@@ -598,9 +607,9 @@ public class TestEffectivePredicateExtractor
         // All left side symbols should be checked against NULL
         assertEquals(normalizeConjuncts(effectivePredicate),
                 normalizeConjuncts(or(lessThan(BE, AE), and(isNull(BE), isNull(AE))),
-                        or(lessThan(CE, number(10)), isNull(CE)),
+                        or(lessThan(CE, bigintLiteral(10)), isNull(CE)),
                         equals(DE, EE),
-                        lessThan(FE, number(100)),
+                        lessThan(FE, bigintLiteral(100)),
                         or(equals(AE, DE), isNull(AE)),
                         or(equals(BE, EE), isNull(BE))));
     }
@@ -639,8 +648,9 @@ public class TestEffectivePredicateExtractor
                 filter(rightScan,
                         and(
                                 equals(DE, EE),
-                                lessThan(FE, number(100)))),
+                                lessThan(FE, bigintLiteral(100)))),
                 criteria,
+                Optional.empty(),
                 Optional.empty(),
                 Optional.empty());
 
@@ -649,7 +659,7 @@ public class TestEffectivePredicateExtractor
         // False literal on the left side should be ignored
         assertEquals(normalizeConjuncts(effectivePredicate),
                 normalizeConjuncts(equals(DE, EE),
-                        lessThan(FE, number(100)),
+                        lessThan(FE, bigintLiteral(100)),
                         or(equals(AE, DE), isNull(AE))));
     }
 
@@ -658,8 +668,8 @@ public class TestEffectivePredicateExtractor
             throws Exception
     {
         PlanNode node = new SemiJoinNode(newId(),
-                filter(baseTableScan, and(greaterThan(AE, number(10)), lessThan(AE, number(100)))),
-                filter(baseTableScan, greaterThan(AE, number(5))),
+                filter(baseTableScan, and(greaterThan(AE, bigintLiteral(10)), lessThan(AE, bigintLiteral(100)))),
+                filter(baseTableScan, greaterThan(AE, bigintLiteral(5))),
                 A, B, C,
                 Optional.empty(),
                 Optional.empty());
@@ -668,7 +678,7 @@ public class TestEffectivePredicateExtractor
 
         // Currently, only pull predicates through the source plan
         assertEquals(normalizeConjuncts(effectivePredicate),
-                normalizeConjuncts(and(greaterThan(AE, number(10)), lessThan(AE, number(100)))));
+                normalizeConjuncts(and(greaterThan(AE, bigintLiteral(10)), lessThan(AE, bigintLiteral(100)))));
     }
 
     private static PlanNodeId newId()
@@ -686,8 +696,11 @@ public class TestEffectivePredicateExtractor
         return new QualifiedNameReference(symbol.toQualifiedName());
     }
 
-    private static Expression number(long number)
+    private static Expression bigintLiteral(long number)
     {
+        if (number < Integer.MAX_VALUE && number > Integer.MIN_VALUE) {
+            return new GenericLiteral("BIGINT", String.valueOf(number));
+        }
         return new LongLiteral(String.valueOf(number));
     }
 
@@ -718,7 +731,7 @@ public class TestEffectivePredicateExtractor
 
     private static Signature fakeFunctionHandle(String name, FunctionKind kind)
     {
-        return new Signature(name, kind, UnknownType.NAME, ImmutableList.<String>of());
+        return new Signature(name, kind, TypeSignature.parseTypeSignature(UnknownType.NAME), ImmutableList.<TypeSignature>of());
     }
 
     private Set<Expression> normalizeConjuncts(Expression... conjuncts)

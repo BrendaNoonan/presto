@@ -16,8 +16,10 @@ package com.facebook.presto.operator.scalar;
 import com.facebook.presto.spi.type.SqlVarbinary;
 import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.type.ArrayType;
+import com.facebook.presto.type.MapType;
 import com.facebook.presto.type.SqlType;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import io.airlift.slice.Slice;
 import org.testng.annotations.Test;
 
@@ -77,14 +79,14 @@ public class TestStringFunctions
     @Test
     public void testLength()
     {
-        assertFunction("LENGTH('')", BIGINT, 0);
-        assertFunction("LENGTH('hello')", BIGINT, 5);
-        assertFunction("LENGTH('Quadratically')", BIGINT, 13);
+        assertFunction("LENGTH('')", BIGINT, 0L);
+        assertFunction("LENGTH('hello')", BIGINT, 5L);
+        assertFunction("LENGTH('Quadratically')", BIGINT, 13L);
         //
         // Test length for non-ASCII
-        assertFunction("LENGTH('hello na\u00EFve world')", BIGINT, 17);
-        assertFunction("LENGTH('\uD801\uDC2Dend')", BIGINT, 4);
-        assertFunction("LENGTH('\u4FE1\u5FF5,\u7231,\u5E0C\u671B')", BIGINT, 7);
+        assertFunction("LENGTH('hello na\u00EFve world')", BIGINT, 17L);
+        assertFunction("LENGTH('\uD801\uDC2Dend')", BIGINT, 4L);
+        assertFunction("LENGTH('\u4FE1\u5FF5,\u7231,\u5E0C\u671B')", BIGINT, 7L);
     }
 
     @Test
@@ -144,31 +146,31 @@ public class TestStringFunctions
     @Test
     public void testStringPosition()
     {
-        testStrPosAndPosition("high", "ig", 2);
-        testStrPosAndPosition("high", "igx", 0);
-        testStrPosAndPosition("Quadratically", "a", 3);
-        testStrPosAndPosition("foobar", "foobar", 1);
-        testStrPosAndPosition("foobar", "obar", 3);
-        testStrPosAndPosition("zoo!", "!", 4);
-        testStrPosAndPosition("x", "", 1);
-        testStrPosAndPosition("", "", 1);
+        testStrPosAndPosition("high", "ig", 2L);
+        testStrPosAndPosition("high", "igx", 0L);
+        testStrPosAndPosition("Quadratically", "a", 3L);
+        testStrPosAndPosition("foobar", "foobar", 1L);
+        testStrPosAndPosition("foobar", "obar", 3L);
+        testStrPosAndPosition("zoo!", "!", 4L);
+        testStrPosAndPosition("x", "", 1L);
+        testStrPosAndPosition("", "", 1L);
 
-        testStrPosAndPosition("\u4FE1\u5FF5,\u7231,\u5E0C\u671B", "\u7231", 4);
-        testStrPosAndPosition("\u4FE1\u5FF5,\u7231,\u5E0C\u671B", "\u5E0C\u671B", 6);
-        testStrPosAndPosition("\u4FE1\u5FF5,\u7231,\u5E0C\u671B", "nice", 0);
+        testStrPosAndPosition("\u4FE1\u5FF5,\u7231,\u5E0C\u671B", "\u7231", 4L);
+        testStrPosAndPosition("\u4FE1\u5FF5,\u7231,\u5E0C\u671B", "\u5E0C\u671B", 6L);
+        testStrPosAndPosition("\u4FE1\u5FF5,\u7231,\u5E0C\u671B", "nice", 0L);
 
         testStrPosAndPosition(null, "", null);
         testStrPosAndPosition("", null, null);
         testStrPosAndPosition(null, null, null);
     }
 
-    private void testStrPosAndPosition(String string, String substring, Integer expected)
+    private void testStrPosAndPosition(String string, String substring, Long expected)
     {
         string = (string == null) ? "NULL" : ("'" + string + "'");
         substring = (substring == null) ? "NULL" : ("'" + substring + "'");
 
-        assertFunction(String.format("STRPOS(%s, %s)", string, substring), BIGINT,  expected);
-        assertFunction(String.format("POSITION(%s in %s)", substring, string), BIGINT,  expected);
+        assertFunction(String.format("STRPOS(%s, %s)", string, substring), BIGINT, expected);
+        assertFunction(String.format("POSITION(%s in %s)", substring, string), BIGINT, expected);
     }
 
     @Test
@@ -239,6 +241,38 @@ public class TestStringFunctions
         assertInvalidFunction("SPLIT('a.b.c', '.', 0)", "Limit must be positive");
         assertInvalidFunction("SPLIT('a.b.c', '.', -1)", "Limit must be positive");
         assertInvalidFunction("SPLIT('a.b.c', '.', 2147483648)", "Limit is too large");
+    }
+
+    @Test
+    public void testSplitToMap()
+    {
+        MapType expectedType = new MapType(VARCHAR, VARCHAR);
+
+        assertFunction("SPLIT_TO_MAP('', ',', '=')", expectedType, ImmutableMap.of());
+        assertFunction("SPLIT_TO_MAP('a=123,b=.4,c=,=d', ',', '=')", expectedType, ImmutableMap.of("a", "123", "b", ".4", "c", "", "", "d"));
+        assertFunction("SPLIT_TO_MAP('=', ',', '=')", expectedType, ImmutableMap.of("", ""));
+        assertFunction("SPLIT_TO_MAP('key=>value', ',', '=>')", expectedType, ImmutableMap.of("key", "value"));
+        assertFunction("SPLIT_TO_MAP('key => value', ',', '=>')", expectedType, ImmutableMap.of("key ", " value"));
+
+        // Test SPLIT_TO_MAP for non-ASCII
+        assertFunction("SPLIT_TO_MAP('\u4EA0\u4EFF\u4EA1', '\u4E00', '\u4EFF')", expectedType, ImmutableMap.of("\u4EA0", "\u4EA1"));
+        // If corresponding value is not found, then ""(empty string) is its value
+        assertFunction("SPLIT_TO_MAP('\u4EC0\u4EFF', '\u4E00', '\u4EFF')", expectedType, ImmutableMap.of("\u4EC0", ""));
+        // If corresponding key is not found, then ""(empty string) is its key
+        assertFunction("SPLIT_TO_MAP('\u4EFF\u4EC1', '\u4E00', '\u4EFF')", expectedType, ImmutableMap.of("", "\u4EC1"));
+
+        // Entry delimiter and key-value delimiter must not be the same.
+        assertInvalidFunction("SPLIT_TO_MAP('', '\u4EFF', '\u4EFF')", expectedType, "entryDelimiter and keyValueDelimiter must not be the same");
+        assertInvalidFunction("SPLIT_TO_MAP('a=123,b=.4,c=', '=', '=')", expectedType, "entryDelimiter and keyValueDelimiter must not be the same");
+
+        // Duplicate keys are not allowed to exist.
+        assertInvalidFunction("SPLIT_TO_MAP('a=123,a=.4', ',', '=')", expectedType, "Duplicate keys (a) are not allowed");
+        assertInvalidFunction("SPLIT_TO_MAP('\u4EA0\u4EFF\u4EA1\u4E00\u4EA0\u4EFF\u4EB1', '\u4E00', '\u4EFF')", expectedType, "Duplicate keys (\u4EA0) are not allowed");
+
+        // Key-value delimiter must appear exactly once in each entry.
+        assertInvalidFunction("SPLIT_TO_MAP('key', ',', '=')", expectedType, "Key-value delimiter must appear exactly once in each entry. Bad input: 'key'");
+        assertInvalidFunction("SPLIT_TO_MAP('key==value', ',', '=')", expectedType, "Key-value delimiter must appear exactly once in each entry. Bad input: 'key==value'");
+        assertInvalidFunction("SPLIT_TO_MAP('key=va=lue', ',', '=')", expectedType, "Key-value delimiter must appear exactly once in each entry. Bad input: 'key=va=lue'");
     }
 
     @Test
@@ -378,6 +412,68 @@ public class TestStringFunctions
         assertFunction("CAST(UPPER(utf8(from_hex('CE'))) AS VARBINARY)", VARBINARY, new SqlVarbinary(new byte[] {(byte) 0xCE}));
         assertFunction("CAST(UPPER('hello' || utf8(from_hex('CE'))) AS VARBINARY)", VARBINARY, new SqlVarbinary(new byte[] {'H', 'E', 'L', 'L', 'O', (byte) 0xCE}));
         assertFunction("CAST(UPPER(utf8(from_hex('CE')) || 'hello') AS VARBINARY)", VARBINARY, new SqlVarbinary(new byte[] {(byte) 0xCE, 'H', 'E', 'L', 'L', 'O'}));
+    }
+
+    @Test
+    public void testLeftPad()
+    {
+        assertFunction("LPAD('text', 5, 'x')", VARCHAR, "xtext");
+        assertFunction("LPAD('text', 4, 'x')", VARCHAR, "text");
+
+        assertFunction("LPAD('text', 6, 'xy')", VARCHAR, "xytext");
+        assertFunction("LPAD('text', 7, 'xy')", VARCHAR, "xyxtext");
+        assertFunction("LPAD('text', 9, 'xyz')", VARCHAR, "xyzxytext");
+
+        assertFunction("LPAD('\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ', 10, '\u671B')", VARCHAR, "\u671B\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ");
+        assertFunction("LPAD('\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ', 11, '\u671B')", VARCHAR, "\u671B\u671B\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ");
+        assertFunction("LPAD('\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ', 12, '\u5E0C\u671B')", VARCHAR, "\u5E0C\u671B\u5E0C\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ");
+        assertFunction("LPAD('\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ', 13, '\u5E0C\u671B')", VARCHAR, "\u5E0C\u671B\u5E0C\u671B\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ");
+
+        assertFunction("LPAD('', 3, 'a')", VARCHAR, "aaa");
+        assertFunction("LPAD('abc', 0, 'e')", VARCHAR, "");
+
+        // truncation
+        assertFunction("LPAD('text', 3, 'xy')", VARCHAR, "tex");
+        assertFunction("LPAD('\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ', 5, '\u671B')", VARCHAR, "\u4FE1\u5FF5 \u7231 ");
+
+        // failure modes
+        assertInvalidFunction("LPAD('abc', 3, '')", "Padding string must not be empty");
+
+        // invalid target lengths
+        long maxSize = Integer.MAX_VALUE;
+        assertInvalidFunction("LPAD('abc', -1, 'foo')", "Target length must be in the range [0.." + maxSize + "]");
+        assertInvalidFunction("LPAD('abc', " + (maxSize + 1) + ", '')", "Target length must be in the range [0.." + maxSize + "]");
+    }
+
+    @Test
+    public void testRightPad()
+    {
+        assertFunction("RPAD('text', 5, 'x')", VARCHAR, "textx");
+        assertFunction("RPAD('text', 4, 'x')", VARCHAR, "text");
+
+        assertFunction("RPAD('text', 6, 'xy')", VARCHAR, "textxy");
+        assertFunction("RPAD('text', 7, 'xy')", VARCHAR, "textxyx");
+        assertFunction("RPAD('text', 9, 'xyz')", VARCHAR, "textxyzxy");
+
+        assertFunction("RPAD('\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ', 10, '\u671B')", VARCHAR, "\u4FE1\u5FF5 \u7231 \u5E0C\u671B  \u671B");
+        assertFunction("RPAD('\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ', 11, '\u671B')", VARCHAR, "\u4FE1\u5FF5 \u7231 \u5E0C\u671B  \u671B\u671B");
+        assertFunction("RPAD('\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ', 12, '\u5E0C\u671B')", VARCHAR, "\u4FE1\u5FF5 \u7231 \u5E0C\u671B  \u5E0C\u671B\u5E0C");
+        assertFunction("RPAD('\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ', 13, '\u5E0C\u671B')", VARCHAR, "\u4FE1\u5FF5 \u7231 \u5E0C\u671B  \u5E0C\u671B\u5E0C\u671B");
+
+        assertFunction("RPAD('', 3, 'a')", VARCHAR, "aaa");
+        assertFunction("RPAD('abc', 0, 'e')", VARCHAR, "");
+
+        // truncation
+        assertFunction("RPAD('text', 3, 'xy')", VARCHAR, "tex");
+        assertFunction("RPAD('\u4FE1\u5FF5 \u7231 \u5E0C\u671B  ', 5, '\u671B')", VARCHAR, "\u4FE1\u5FF5 \u7231 ");
+
+        // failure modes
+        assertInvalidFunction("RPAD('abc', 3, '')", "Padding string must not be empty");
+
+        // invalid target lengths
+        long maxSize = Integer.MAX_VALUE;
+        assertInvalidFunction("RPAD('abc', -1, 'foo')", "Target length must be in the range [0.." + maxSize + "]");
+        assertInvalidFunction("RPAD('abc', " + (maxSize + 1) + ", '')", "Target length must be in the range [0.." + maxSize + "]");
     }
 
     @Test

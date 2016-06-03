@@ -15,6 +15,8 @@ package com.facebook.presto.raptor;
 
 import com.facebook.presto.Session;
 import com.facebook.presto.metadata.QualifiedObjectName;
+import com.facebook.presto.metadata.SessionPropertyManager;
+import com.facebook.presto.raptor.storage.StorageManagerConfig;
 import com.facebook.presto.testing.QueryRunner;
 import com.facebook.presto.tests.DistributedQueryRunner;
 import com.facebook.presto.tpch.TpchPlugin;
@@ -56,6 +58,7 @@ public final class RaptorQueryRunner
         File baseDir = queryRunner.getCoordinator().getBaseDataDir().toFile();
         Map<String, String> raptorProperties = ImmutableMap.<String, String>builder()
                 .put("metadata.db.type", "h2")
+                .put("metadata.db.connections.max", "100")
                 .put("metadata.db.filename", new File(baseDir, "db").getAbsolutePath())
                 .put("storage.data-directory", new File(baseDir, "data").getAbsolutePath())
                 .put("storage.max-shard-rows", "2000")
@@ -127,7 +130,9 @@ public final class RaptorQueryRunner
 
     private static Session createSession(String schema)
     {
-        return testSessionBuilder()
+        SessionPropertyManager sessionPropertyManager = new SessionPropertyManager();
+        sessionPropertyManager.addConnectorSessionProperties("raptor", new RaptorSessionProperties(new StorageManagerConfig()).getSessionProperties());
+        return testSessionBuilder(sessionPropertyManager)
                 .setCatalog("raptor")
                 .setSchema(schema)
                 .setSystemProperties(ImmutableMap.of("columnar_processing_dictionary", "true", "dictionary_aggregation", "true"))

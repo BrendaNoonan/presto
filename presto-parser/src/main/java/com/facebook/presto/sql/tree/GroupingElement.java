@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.sql.tree;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -24,5 +25,11 @@ public abstract class GroupingElement
         super(location);
     }
 
-    public abstract Set<Set<Expression>> enumerateGroupingSets();
+    public abstract List<Set<Expression>> enumerateGroupingSets();
+
+    @Override
+    protected <R, C> R accept(AstVisitor<R, C> visitor, C context)
+    {
+        return visitor.visitGroupingElement(this, context);
+    }
 }
